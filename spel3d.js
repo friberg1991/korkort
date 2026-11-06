@@ -8,7 +8,7 @@
 (function () {
   if (!window.THREE) return;
   var T = window.THREE;
-  var GROUND_PX = 2048, GROUND_M = 160, AHEAD = 30;   // ground texture size and how far ahead its centre sits
+  var GROUND_PX = 2048, GROUND_M = 190, AHEAD = 25;   // ground texture size and how far ahead its centre sits
   var renderer = null, scene, camera, cockpit, wheel, grass, ground, groundCv, groundTex, gctx, canvas;
   var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
   var camA = 0, wheelA = 0, prevA = null, failed = false;
@@ -39,7 +39,7 @@
     scene.add(camera);
     scene.add(new T.HemisphereLight(0xffffff, 0x6a8a50, 1.0));
     var sun = new T.DirectionalLight(0xffffff, 0.8); sun.position.set(40, 80, 25); scene.add(sun);
-    grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.03, 0);
+    grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
     grass.rotation.x = -Math.PI / 2; scene.add(grass);
     groundCv = document.createElement("canvas"); groundCv.width = groundCv.height = GROUND_PX;
     gctx = groundCv.getContext("2d");
@@ -49,6 +49,7 @@
     ground = mesh(new T.PlaneGeometry(GROUND_M, GROUND_M), new T.MeshLambertMaterial({ map: groundTex }), 0, 0, 0);
     ground.rotation.x = -Math.PI / 2; scene.add(ground);
     buildCockpit();
+    buildOwnCar();
     window.addEventListener("resize", resize);
     resize();
   }
@@ -79,7 +80,7 @@
     cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, -0.63, -0.29, -0.35));
     cockpit.add(mesh(box(0.03, 0.04, 0.16), mat(0x8c9198), -0.61, -0.4, -0.3));
     // Windscreen pillars, roof lining and sun visors.
-    [[-0.62, -0.95], [1.35, -1.0]].forEach(function (q) {
+    [[-0.66, -0.95], [1.35, -1.0]].forEach(function (q) {
       var pil = mesh(box(0.1, 1.4, 0.1), trim, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
     });
     cockpit.add(mesh(box(2.4, 0.1, 0.9), liner, 0.35, 0.62, -0.5));
@@ -87,9 +88,9 @@
     cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, 0.85, 0.55, -0.85));
     // Mirrors: rear-view in the middle of the roof edge, one on each door. Their pictures come from cameras looking back.
     mirrors = [
-      makeMirror(0.38, 0.17, -0.72, 0.36, 0.1, 30, 0x16191c, 0.6),
-      makeMirror(-0.86, -0.04, -0.98, 0.2, 0.13, 38, 0x2a2e33, 0.35),
-      makeMirror(0.98, -0.05, -1.12, 0.2, 0.13, 38, 0x2a2e33, -0.35)
+      makeMirror(0.38, 0.17, -0.72, 0.4, 0.11, 34, 0x16191c, 0.6),
+      makeMirror(-1.0, -0.06, -0.98, 0.22, 0.14, 40, 0x2a2e33, 0.5),
+      makeMirror(1.0, -0.07, -1.12, 0.22, 0.14, 40, 0x2a2e33, -0.5)
     ];
     cockpit.add(mesh(box(0.02, 0.4, 0.02), trim, 0.38, 0.4, -0.74));
     // Steering wheel and the blinker stalk on its left.
@@ -107,10 +108,20 @@
     var logo = mesh(new T.CylinderGeometry(0.02, 0.02, 0.012, 10), mat(0x9aa0a6), 0, 0, 0.03); logo.rotation.x = Math.PI / 2; wheel.add(logo);
     wheel.add(mesh(box(0.05, 0.03, 0.035), mat(0xb8b2a6), 0, 0.19, 0.0));   // stitching mark at the top
   }
-  var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk;
+  var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk, ownCar;
+  function buildOwnCar() {
+    ownCar = new T.Group();
+    ownCar.add(mesh(box(1.9, 0.75, 4.5), mat(0xe03832), 0, 0.6, 0));
+    ownCar.add(mesh(box(1.75, 0.55, 2.3), mat(0xe03832), 0, 1.22, 0.3));
+    ownCar.add(mesh(box(1.77, 0.4, 2.1), mat(0x303a4a), 0, 1.25, 0.3));
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (w) {
+      var wh = mesh(cyl(0.33, 0.33, 0.24, 10), mat(0x1c1c1c), w[0] * 0.88, 0.33, w[1] * 1.45); wh.rotation.z = Math.PI / 2; ownCar.add(wh);
+    });
+    ownCar.visible = false; scene.add(ownCar);
+  }
 
   function makeMirror(x, y, z, w, h, fov, frame, yaw) {
-    var rt = new T.WebGLRenderTarget(256, Math.round(256 * h / w));
+    var rt = new T.WebGLRenderTarget(320, Math.round(320 * h / w));
     if (T.SRGBColorSpace) rt.texture.colorSpace = T.SRGBColorSpace;
     rt.texture.wrapS = T.RepeatWrapping; rt.texture.repeat.x = -1; rt.texture.offset.x = 1;   // a mirror shows things the other way round
     var g = new T.Group(); g.position.set(x, y, z); g.rotation.y = yaw * 0.4;
@@ -124,14 +135,18 @@
   function renderMirrors(p, a) {
     var fx = Math.sin(a), fy = -Math.cos(a), rx = Math.cos(a), ry = Math.sin(a);
     cockpit.visible = false;
+    // Our own car, seen only in the mirrors: its flank shows at the inner edge of the door mirrors.
+    ownCar.visible = true; ownCar.position.set(p.x, 0, p.y); ownCar.rotation.y = -a;
     mirrors.forEach(function (m) {
-      var off = m.side === 0 ? 0 : m.side * 1.0, fwd = m.side === 0 ? -0.6 : 0.4;
-      m.cam.position.set(p.x + rx * off + fx * fwd, m.side === 0 ? 1.3 : 1.05, p.y + ry * off + fy * fwd);
-      m.cam.rotation.set(-0.03, Math.PI - a - m.side * 0.12, 0);
+      var off = m.side === 0 ? 0 : m.side * 1.08, fwd = m.side === 0 ? -0.9 : 0.5;
+      m.cam.position.set(p.x + rx * off + fx * fwd, m.side === 0 ? 1.32 : 1.05, p.y + ry * off + fy * fwd);
+      // Door mirrors look back and a little outwards; the rear-view one straight back, slightly down.
+      m.cam.rotation.set(m.side === 0 ? -0.06 : -0.05, Math.PI - a + m.side * 0.2, 0);
+      ownCar.visible = m.side !== 0;
       renderer.setRenderTarget(m.rt); renderer.render(scene, m.cam);
     });
     renderer.setRenderTarget(null);
-    cockpit.visible = true;
+    cockpit.visible = true; ownCar.visible = false;
   }
   function drawCluster(kmh, limit, blink, on) {
     var key = kmh + "|" + limit + "|" + blink + "|" + on;
@@ -214,7 +229,52 @@
       else if (d.t === "tree") { var q = api.toG(pc.P, d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
     });
     if (pc.kind === "round") tree(pc.C.x, pc.C.y, 2.4);
+    if (pc.kind === "road" || pc.kind === "mv") roadside(api, pc);
     if (pc.light) buildLights(api, pc);
+  }
+
+  function cyl(r1, r2, h, n) { var k = "c" + r1 + "," + r2 + "," + h + "," + n; return geos[k] || (geos[k] = new T.CylinderGeometry(r1, r2, h, n)); }
+  // Street furniture along a piece: lamps in town, white edge posts on country roads,
+  // the guard rail between the motorway's carriageways, a shelter at a bus stop.
+  function roadside(api, pc) {
+    var L = pc.len, st = pc.st, at = function (u, w) { return api.toG(pc.P, u, w); };
+    if (pc.kind === "mv") {
+      var c = at(-8.4, L / 2), rail = new T.Group();
+      rail.add(mesh(box(0.1, 0.32, L), mat(0xc9c9c4), 0, 0.6, 0));
+      for (var k = -L / 2 + 2; k < L / 2; k += 4) rail.add(mesh(box(0.12, 0.6, 0.12), mat(0x8a8e94), 0, 0.3, k));
+      place(rail, c.x, c.y, pc.P.a);
+      return;
+    }
+    if (pc.env === "stad") {
+      var edge = 1.75 + (pc.parking ? 2.5 : 0) + 0.5;
+      for (var w = 12; w < L - 8; w += 32) {
+        var q = at(edge, w), lamp = new T.Group();
+        lamp.add(mesh(cyl(0.06, 0.08, 6, 6), mat(0x55595e), 0, 3, 0));
+        lamp.add(mesh(box(1.4, 0.08, 0.08), mat(0x55595e), -0.7, 5.95, 0));
+        lamp.add(mesh(box(0.5, 0.12, 0.25), mat(0x3a3f45), -1.35, 5.88, 0));
+        lamp.add(mesh(box(0.42, 0.03, 0.18), mat(0xfff3c4, true), -1.35, 5.81, 0));
+        place(lamp, q.x, q.y, pc.P.a);
+      }
+    } else {
+      // Kantstolpar: white posts with a black band, about every 50 m on both sides.
+      for (var w2 = 25; w2 < L; w2 += 50) {
+        [[2.7, 0], [-6.2, Math.PI]].forEach(function (o) {
+          var q2 = at(o[0], w2), post = new T.Group();
+          post.add(mesh(box(0.12, 1.0, 0.12), mat(0xeceef0), 0, 0.5, 0));
+          post.add(mesh(box(0.13, 0.18, 0.13), mat(0x1c1c1c), 0, 0.85, 0));
+          post.add(mesh(box(0.05, 0.08, 0.02), mat(0xffa61e, true), 0, 0.72, 0.07));
+          place(post, q2.x, q2.y, pc.P.a + o[1]);
+        });
+      }
+    }
+    if (st.bus) {
+      var b = at(7.2, st.bus.s), shelter = new T.Group();
+      shelter.add(mesh(box(1.6, 0.1, 4.2), mat(0x3a3f45), 0, 2.4, 0));
+      shelter.add(mesh(box(0.06, 2.3, 4.0), new T.MeshLambertMaterial({ color: 0x9fc3d6, transparent: true, opacity: 0.45 }), 0.75, 1.2, 0));
+      [-1.95, 1.95].forEach(function (z) { shelter.add(mesh(box(1.5, 2.3, 0.06), new T.MeshLambertMaterial({ color: 0x9fc3d6, transparent: true, opacity: 0.45 }), 0, 1.2, z)); });
+      shelter.add(mesh(box(0.5, 0.45, 2.6), mat(0x6b4a2f), 0.35, 0.45, 0));
+      place(shelter, b.x, b.y, pc.P.a);
+    }
   }
 
   // Signs stand on the right and face the traffic coming towards them.
@@ -329,13 +389,27 @@
       }
     } else {
       var L = n.hl * 2, Wd = n.hw * 2;
+      var wheels = function (zs, r) {
+        zs.forEach(function (z) { [-1, 1].forEach(function (sd) {
+          var wh = mesh(cyl(r, r, 0.32, 12), mat(0x1c1c1c), sd * (n.hw - 0.12), r, z); wh.rotation.z = Math.PI / 2; g.add(wh);
+          var hub = mesh(cyl(r * 0.45, r * 0.45, 0.34, 8), mat(0x9aa0a6), sd * (n.hw - 0.12), r, z); hub.rotation.z = Math.PI / 2; g.add(hub);
+        }); });
+      };
       if (n.kind === "bus") {
-        g.add(mesh(box(Wd, 2.8, L), mat(col), 0, 1.7, 0));
-        g.add(mesh(box(Wd + 0.02, 0.9, L - 1.2), mat(0x303a4a), 0, 2.2, 0.3));
+        g.add(mesh(box(Wd, 2.75, L), mat(col), 0, 0.3 + 1.375, 0));
+        g.add(mesh(box(Wd + 0.02, 1.0, L - 2.2), mat(0x303a4a), 0, 2.1, 0.5));          // side windows
+        g.add(mesh(box(Wd - 0.2, 1.3, 0.04), mat(0x303a4a), 0, 2.0, -n.hl - 0.01));      // windscreen
+        g.add(mesh(box(Wd - 0.3, 0.3, 0.04), mat(0xffa61e, true), 0, 2.85, -n.hl - 0.02)); // destination sign
+        g.add(mesh(box(0.04, 2.0, 1.1), mat(0x2a3038), n.hw + 0.01, 1.3, -n.hl + 1.4));   // front door, kerb side
+        g.add(mesh(box(0.04, 2.0, 1.1), mat(0x2a3038), n.hw + 0.01, 1.3, 0.6));            // middle door
+        g.add(mesh(box(Wd - 0.4, 0.15, 0.05), mat(0xd04030, true), 0, 0.9, n.hl + 0.01));
+        wheels([-n.hl + 2.3, n.hl - 3.0], 0.5);
       } else if (n.kind === "truck") {
-        g.add(mesh(box(Wd, 2.6, 2.4), mat(0xeceef0), 0, 1.6, -n.hl + 1.2));
-        g.add(mesh(box(Wd + 0.02, 0.8, 0.1), mat(0x303a4a), 0, 2.2, -n.hl + 0.02));
-        g.add(mesh(box(Wd, 3.2, L - 2.8), mat(0x9aa3b4), 0, 1.9, 1.4));
+        g.add(mesh(box(Wd, 2.5, 2.4), mat(0xeceef0), 0, 1.75, -n.hl + 1.2));
+        g.add(mesh(box(Wd + 0.02, 0.8, 0.1), mat(0x303a4a), 0, 2.3, -n.hl + 0.02));
+        g.add(mesh(box(Wd, 3.2, L - 2.8), mat(0x9aa3b4), 0, 2.2, 1.4));
+        g.add(mesh(box(Wd - 0.4, 0.15, 0.05), mat(0xd04030, true), 0, 0.9, n.hl + 0.01));
+        wheels([-n.hl + 1.3, n.hl - 2.8, n.hl - 1.6], 0.5);
       } else if (n.kind === "tractor") {
         g.add(mesh(box(Wd - 0.6, 1.0, L), mat(0x2f8a3a), 0, 1.0, 0));
         g.add(mesh(box(Wd - 0.7, 1.3, 1.3), mat(0x303a4a), 0, 2.1, 0.5));

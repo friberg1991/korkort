@@ -1301,6 +1301,15 @@
   }
   function drawPieces() {
     var vis = G.course.pieces.filter(function (q) { return q.s0 - G.p.s < 320 && G.p.s - (q.s0 + (q.len || 0)) < 140; });
+    // The road also runs on behind where the lesson starts, so the mirrors show a road.
+    var first = G.course.pieces[0];
+    if (first && (first.kind === "road" || first.kind === "mv") && G.p.s < 140) {
+      var lead = Object.create(first);
+      lead.P = toG(first.P, 0, -150); lead.P.a = first.P.a; lead.len = 150; lead.s0 = first.s0 - 150;
+      lead.st = first.kind === "mv" ? { acc: 150 } : {}; lead.parking = false; lead.solid = []; lead.warnEnd = false;
+      lead.decor = first.decor.filter(function (d) { return d.w + (d.len || 0) < 130; });
+      vis.unshift(lead);
+    }
     for (var pass = 0; pass < 3; pass++) {
       vis.forEach(function (q) {
         if (q.kind === "road" || q.kind === "mv") { if (pass === 0) drawRoadGround(q); else if (pass === 1) drawRoadAsphalt(q); else drawRoadMarks(q); }
