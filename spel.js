@@ -291,7 +291,7 @@
       idx: idx, lesson: L, t: 0, npcs: [], faults: [], faultKeys: {}, msg: [], cur: null, curT: 0, over: false, paused: false,
       p: { s: L.start ? L.start.s : 4, v: L.start ? L.start.v / KMH : 0, d: L.start ? L.start.d : 0, td: L.start ? L.start.d : 0,
            blink: 0, blinkS: -1e9, laneT: 0, a: 0, x: 0, y: 0, stillT: 0, overT: 0, leftT: 0, closeT: 0, hl: CAR.hl, hw: CAR.hw },
-      cam: { x: 0, y: 0, a: 0, sc: 12 }, crashed: false, finishT: -1
+      cam: { x: 0, y: 0, a: 0, sc: 12 }, crashed: false, finishT: -1, factShown: {}, factNext: null, factT: 0, lastFact: -99
     };
     G.grip = L.weather === "snow" ? 0.45 : 1;
     G.manual = store.steer !== "auto";
@@ -300,6 +300,7 @@
     G.course = new Course(L.make ? L.make() : L.steps, G);
     G.course.build();
     G.prevS = G.p.s;
+    factEl.classList.remove("show");
     var pose = G.course.poseAt(G.p.s);
     G.cam.x = pose.x; G.cam.y = pose.y; G.cam.a = pose.a;
     G.p.a = pose.a; G.p.x = pose.x + Math.cos(pose.a) * G.p.d; G.p.y = pose.y + Math.sin(pose.a) * G.p.d;
@@ -326,6 +327,102 @@
       sayEl.className = G.cur.tone;
       speak(G.cur.text);
     }
+  }
+  // ---------- "Visste du att…": small facts that fit what is happening ----------
+  // One at a time, at least 35 s apart, never right after a fault or close to a junction.
+  var FACTS = {
+    B1: "Väjningspliktsskylten är en triangel med spetsen nedåt. Hajtänderna i vägen visar var du stannar om det behövs.",
+    B2: "Stoppskylten är åttakantig, så den går att känna igen även bakifrån eller när den är täckt av snö.",
+    B3: "Den blå skylten för övergångsställe sitter vid själva övergångsstället. Blå fyrkantiga skyltar ger upplysningar.",
+    B4: "Huvudled är en gul romb. Den gäller tills skylten Huvudled upphör kommer.",
+    B5: "När huvudleden upphör gäller vanliga regler igen. I en korsning utan skyltar blir det högerregeln.",
+    B6: "På skylten väjningsplikt mot mötande är den röda pilen din riktning: det är du som ska vänta.",
+    C1: "Förbud mot infart är en röd rund skylt med en vågrät list. Den sitter ofta där en enkelriktad gata slutar.",
+    C27: "Omkörningsförbudet gäller motorfordon med fler än två hjul. Cyklar och motorcyklar får du köra om.",
+    C28: "Ett snett streck över en skylt betyder oftast att förbudet eller sträckan slutar.",
+    C39: "Förbud att stanna och parkera gäller på den sida där skylten står, fram till nästa korsning om inget annat anges.",
+    D1: "Blå runda skyltar är påbud. De talar om vad du måste göra, till exempel vilket håll du ska köra.",
+    E1: "På motorväg får du inte vända, backa eller stanna, utom om det är nödvändigt.",
+    E5: "Tättbebyggt område betyder 50 km/h, om ingen annan skylt säger något annat.",
+    E6: "Utanför tättbebyggt område är grundhastigheten 70 km/h om inga skyltar visar annat.",
+    E9: "I ett gångfartsområde får du bara parkera på platser som är särskilt utmärkta.",
+    E19: "P-skylten betyder att parkering är tillåten. En tilläggstavla under den kan begränsa tiden.",
+    E24: "Skylten för trafiksäkerhetskamera sitter före kameran, så att alla hinner se den och sakta in.",
+    A9: "Varning för farthinder sitter före gupp och avsmalningar som ska få ner farten.",
+    A10: "Varning för slirig väg varnar för att vägen kan vara hal, av till exempel is, löv eller lera.",
+    A15: "Varning för barn sitter ofta nära skolor och lekplatser.",
+    A19: "Tusentals viltolyckor sker varje år i Sverige. Ser du ett djur finns det ofta fler i närheten.",
+    A20: "Vid vägarbeten är hastigheten ofta tillfälligt sänkt för att skydda dem som jobbar där.",
+    A30: "Varning för cirkulationsplats sitter en bit före. I rondellen kör alla moturs.",
+    A34: "Köer bildas ofta efter kurvor och backkrön. Släpp gasen tidigt, det sparar både bränsle och bromsar.",
+    A35: "Tåg kan inte väja och har mycket lång bromssträcka. Därför sitter varningen långt före korsningen.",
+    A39: "Kryssmärket sitter vid själva järnvägskorsningen."
+  };
+  var SITUATION_FACTS = {
+    round: "Du behöver inte blinka när du kör in i en cirkulationsplats, men du ska blinka höger när du kör ut.",
+    mv: "Ett fordon måste kunna köra i minst 40 km/h för att få köra på motorväg.",
+    mv2: "Omkörning görs till vänster. I tät kö får det ändå gå fortare i högra körfältet än i det vänstra.",
+    snow: "Bromssträckan på is kan bli flera gånger längre än på torr asfalt.",
+    snow2: "Vinterdäck är krav från 1 december till 31 mars när det är vinterväglag.",
+    rail: "Ett tåg i hög fart kan behöva över en kilometer för att stanna.",
+    zebra: "Du får inte köra om ett fordon strax före ett övergångsställe.",
+    bike: "Två cyklister får cykla bredvid varandra om det inte hindrar annan trafik.",
+    police: "Ha alltid körkortet med dig när du kör. Polisen kan stoppa dig för kontroll när som helst.",
+    accident: "Vid en olycka: varna andra, larma 112 och hjälp de skadade. Varningstriangeln ställs en bit bakom bilen.",
+    light: "Gult blinkande trafikljus betyder att signalen är ur funktion. Då gäller skyltarna och de vanliga reglerna."
+  };
+  var GENERAL_FACTS = [
+    "Gränsen för alkohol i blodet är 0,2 promille för den som kör bil i Sverige.",
+    "Du får inte hålla mobilen i handen när du kör.",
+    "Halvljus eller varselljus ska alltid vara tänt när du kör.",
+    "Alla i bilen ska ha bilbälte, både fram och bak.",
+    "Barn som är kortare än 135 cm ska sitta i bilbarnstol eller på bälteskudde.",
+    "En trött förare är nästan lika farlig som en berusad. Ta paus om du blir sömnig."
+  ];
+  var factEl = document.getElementById("fact"), factText = document.getElementById("factText");
+  factEl.addEventListener("pointerdown", function (e) { e.preventDefault(); hideFact(); });
+  function hideFact() { factEl.classList.remove("show"); if (G) G.factT = 0; }
+  function showFact(text) {
+    G.factShown[text] = true; G.lastFact = G.t; G.factT = 9;
+    factText.textContent = text;
+    var r = sayEl.getBoundingClientRect();
+    factEl.style.top = Math.round(r.bottom + 8) + "px";
+    factEl.classList.add("show");
+  }
+  // What fits the moment goes before a general fact, and is dropped if it waits too long.
+  function wantFact(text, general) {
+    if (!text || G.factShown[text]) return;
+    if (G.factNext && (G.factNext.general ? general : true)) return;
+    G.factNext = { text: text, general: !!general, at: G.t };
+  }
+  function updateFacts(dt) {
+    if (G.factT > 0) { G.factT -= dt; if (G.factT <= 0) hideFact(); }
+    if (store.facts === false) return;
+    var p = G.p, c = G.course;
+    // What fits right now: a sign just ahead, then the situation, then something general.
+    c.signs.forEach(function (sg) { if (sg.code && FACTS[sg.code] && sg.s - p.s < 45 && sg.s - p.s > 0) wantFact(FACTS[sg.code]); });
+    var pc = curPiece(), pend = c.pending;
+    if (pend && pend.kind === "round" && pend.s0 - p.s < 120) wantFact(SITUATION_FACTS.round);
+    if (pend && pend.light && pend.s0 - p.s < 140) wantFact(SITUATION_FACTS.light);
+    if (pc.kind === "mv") wantFact(p.s - pc.s0 > 200 ? SITUATION_FACTS.mv2 : SITUATION_FACTS.mv);
+    if (G.lesson.weather === "snow" && G.t > 20) wantFact(G.t > 70 ? SITUATION_FACTS.snow2 : SITUATION_FACTS.snow);
+    c.feats.forEach(function (f) {
+      if (f.kind === "rail" && f.s - p.s < 200 && f.s - p.s > 60) wantFact(SITUATION_FACTS.rail);
+      if (f.kind === "zebra" && f.s - p.s < 90 && f.s - p.s > 40) wantFact(SITUATION_FACTS.zebra);
+    });
+    if (pc.st.police && p.s - pc.s0 > pc.st.police.s + 10) wantFact(SITUATION_FACTS.police);
+    if (pc.st.accident && p.s - pc.s0 > pc.st.accident.s + pc.st.accident.len + 15) wantFact(SITUATION_FACTS.accident);
+    if (G.npcs.some(function (n) { return n.kind === "bike" && n.s - p.s < 80 && n.s > p.s + 30; })) wantFact(SITUATION_FACTS.bike);
+    if (G.factNext && G.t - G.factNext.at > 25) G.factNext = null;
+    if (!G.factNext && G.t > 30 && G.t - G.lastFact > 70) {
+      var left = GENERAL_FACTS.filter(function (f) { return !G.factShown[f]; });
+      if (left.length) wantFact(left[Math.floor(Math.random() * left.length)], true);
+    }
+    // Only when it is calm.
+    var calm = G.t > 12 && G.t - G.lastFact > 35 && G.factT <= 0 && G.t - (G.lastFaultT || -99) > 8 &&
+      !(pend && pend.kind === "junction" && pend.s0 - p.s < 45) && !G.ambActive &&
+      !G.npcs.some(function (n) { return (n.kind === "moose" || n.kind === "child" || (n.kind === "ped" && n.vu)) && !n.done; });
+    if (calm && G.factNext) { showFact(G.factNext.text); G.factNext = null; }
   }
   var svVoice = null;
   function pickVoice() {
@@ -364,6 +461,8 @@
   };
   function fault(key, title, serious, once) {
     if (G.over) return;
+    G.lastFaultT = G.t;
+    if (G.factT > 0) hideFact();
     if (once !== false) { if (G.faultKeys[key]) return; G.faultKeys[key] = true; }
     var kind = key.split(":")[0];
     G.faults.push({ title: title, info: FAULT_INFO[kind] || "", serious: !!serious });
@@ -496,6 +595,7 @@
     checkRules(dt);
     checkCrash();
     updateSay(dt);
+    updateFacts(dt);
   }
 
   // The car follows the course; the blinker picks lanes and turns.
@@ -1777,6 +1877,7 @@
     var v = document.getElementById("optVoice"), s = document.getElementById("optSound");
     v.checked = !!store.voice; s.checked = !!store.sound;
     document.getElementById("opt3d").checked = !!store.view3d;
+    document.getElementById("optFacts").checked = store.facts !== false;
     document.getElementById("optTraffic").value = String(store.traffic || 0);
     document.getElementById("optSteer").value = store.steer === "auto" ? "auto" : "manual";
     document.getElementById("optWalkers").value = String(store.walkers || 0);
@@ -1786,6 +1887,7 @@
   document.getElementById("optSteer").addEventListener("change", function (e) { store.steer = e.target.value; saveStore(); });
   document.getElementById("optTraffic").addEventListener("change", function (e) { store.traffic = +e.target.value; saveStore(); });
   document.getElementById("optWalkers").addEventListener("change", function (e) { store.walkers = +e.target.value; saveStore(); });
+  document.getElementById("optFacts").addEventListener("change", function (e) { store.facts = e.target.checked; saveStore(); });
   document.getElementById("opt3d").addEventListener("change", function (e) { store.view3d = e.target.checked; saveStore(); });
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);

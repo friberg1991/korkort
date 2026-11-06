@@ -1,6 +1,6 @@
 // Keeps every file of the app on the phone, so it works without internet.
 // build.ps1 fills in the version and the file list.
-var VERSION = "korkort-babec1c0a359";
+var VERSION = "korkort-4d3c09799a61";
 var FILES = [
   "./",
   "app.js",
