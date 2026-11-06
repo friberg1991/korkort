@@ -147,6 +147,7 @@
     if (st.zebra) course.feats.push({ kind: "zebra", s: pc.s0 + st.zebra.s, pc: pc, peds: st.zebra.peds || [], started: false });
     if (st.rail) course.feats.push({ kind: "rail", s: pc.s0 + st.rail.s, pc: pc, state: "open", t: 0 });
     if (st.bus) course.feats.push({ kind: "bus", s: pc.s0 + st.bus.s, pc: pc });
+    (st.bumps || []).forEach(function (b) { course.feats.push({ kind: "bump", s: pc.s0 + b, pc: pc }); });
     if (st.parking) pc.parking = st.parking;
     return pc;
   }
@@ -238,7 +239,7 @@
     this.id = nextId++; this.mode = "path"; this.kind = o.kind || "car"; this.s = o.s; this.d = o.d || 0; this.td = this.d;
     this.dir = o.dir || 1; this.v = o.v != null ? o.v : 0; this.vt = o.vt != null ? o.vt : this.v; this.color = o.color || pickColor();
     this.vtAt = o.vtAt || null; this.blink = 0; this.siren = this.kind === "amb"; this.parked = !!o.parked; this.ttl = o.ttl || 0;
-    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1] }[this.kind];
+    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35] }[this.kind];
     this.hl = dims[0]; this.hw = dims[1];
   }
   function PolyCar(o) {
@@ -268,15 +269,24 @@
   }
   function saveStore() { try { localStorage.setItem("korkort-spel", JSON.stringify(store)); } catch (e) { /* private mode */ } }
 
+  var BASE_COL = { grass: COL.grass, grassDark: COL.grassDark, walk: COL.walk, tree: COL.tree, treeLight: COL.treeLight, asph: COL.asph };
+  function setWeather(w) {
+    var snow = w === "snow";
+    COL.grass = snow ? "#e6ebee" : BASE_COL.grass; COL.grassDark = snow ? "#d5dce0" : BASE_COL.grassDark;
+    COL.walk = snow ? "#dfe3e6" : BASE_COL.walk; COL.treeLight = snow ? "#f2f5f7" : BASE_COL.treeLight;
+    COL.tree = snow ? "#3b5a40" : BASE_COL.tree; COL.asph = snow ? "#5d6268" : BASE_COL.asph;
+  }
   function startLesson(idx) {
     var L = LESSONS[idx];
+    setWeather(L.weather);
     G = {
       idx: idx, lesson: L, t: 0, npcs: [], faults: [], faultKeys: {}, msg: [], cur: null, curT: 0, over: false, paused: false,
       p: { s: L.start ? L.start.s : 4, v: L.start ? L.start.v / KMH : 0, d: L.start ? L.start.d : 0, td: L.start ? L.start.d : 0,
            blink: 0, blinkS: -1e9, laneT: 0, a: 0, x: 0, y: 0, stillT: 0, overT: 0, leftT: 0, closeT: 0, hl: CAR.hl, hw: CAR.hw },
       cam: { x: 0, y: 0, a: 0, sc: 12 }, crashed: false, finishT: -1
     };
-    G.course = new Course(L.steps, G);
+    G.grip = L.weather === "snow" ? 0.45 : 1;
+    G.course = new Course(L.make ? L.make() : L.steps, G);
     G.course.build();
     G.prevS = G.p.s;
     var pose = G.course.poseAt(G.p.s);
@@ -422,6 +432,8 @@
       if (st.dec && t > st.dec[0] && t < st.dec[1]) out.push(3.5);
     }
     if (G.ambActive && pc.kind === "road") out.push(1.3);
+    // Room to pass a cyclist: half a lane out to the left.
+    if (pc.kind === "road" && G.npcs.some(function (n) { return n.kind === "bike" && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
     return out;
   }
 
@@ -430,8 +442,8 @@
     G.t += dt;
     // Pedals.
     var a;
-    if (keys.brake) a = -7.5;
-    else if (keys.gas) a = 3.4 * (1 - p.v / 48) + 0.3;
+    if (keys.brake) a = -7.5 * G.grip;
+    else if (keys.gas) a = (3.4 * (1 - p.v / 48) + 0.3) * (0.55 + 0.45 * G.grip);
     else a = -0.3 - p.v * 0.006;
     p.v = Math.max(0, p.v + a * dt);
     // Lane changes follow the blinker after a short while, away from junctions.
@@ -500,6 +512,19 @@
 
   function checkRules(dt) {
     var p = G.p, pc = curPiece(), kmh = p.v * KMH, lim = pc.limit;
+    // Passing a cyclist: keep well out to the side.
+    G.npcs.forEach(function (n) {
+      if (n.kind !== "bike" || n.passedBy) return;
+      if (G.prevS < n.s && p.s >= n.s) {
+        n.passedBy = true;
+        if (Math.abs(n.d - p.d) < 2.2) fault("bike:" + n.id, "För nära cyklisten! Kör om med ordentligt avstånd i sidled.", false);
+        else if (!n.praised) { n.praised = true; praise("Bra, du gav cyklisten gott om plats."); }
+      }
+    });
+    // Speed bumps.
+    G.course.feats.forEach(function (f) {
+      if (f.kind === "bump" && crossedFront(f.s) && kmh > lim + 7) fault("bump:" + f.s, "För fort över farthindret!", false);
+    });
     // Speed: more than 5 km/h over for two seconds.
     if (kmh > lim + 5) p.overT += dt; else p.overT = 0;
     if (p.overT > 2) fault("speed:" + pc.index, "För fort! Här gäller " + lim + " km/h.", kmh > lim + 15);
@@ -542,7 +567,10 @@
     if (!pc.started && t > -200) {
       pc.started = true;
       (st.ahead || []).forEach(function (a) {
-        G.npcs.push(new PathCar({ s: pc.s0 + a.s, d: a.d || 0, v: a.v / KMH, kind: a.kind || "car", color: a.color, vtAt: a.queue ? queueFn(pc, a) : null, ttl: a.ttl ? pc.s0 + a.ttl : 0 }));
+        var vtAt = a.queue ? queueFn(pc, a) : a.brakeAt ? brakeFn(pc, a) : null;
+        var car = new PathCar({ s: pc.s0 + a.s, d: a.d != null ? a.d : a.kind === "bike" ? 1.15 : 0, v: a.v / KMH, kind: a.kind || "car", color: a.color, vtAt: vtAt, ttl: a.ttl ? pc.s0 + a.ttl : 0 });
+        if (a.brakeAt) car.suddenAt = pc.s0 + a.brakeAt;
+        G.npcs.push(car);
       });
       (st.parked || []).forEach(function (s) {
         G.npcs.push(new PathCar({ s: pc.s0 + s, d: 3.0, v: 0, kind: "car", parked: true }));
@@ -615,6 +643,11 @@
     if (s - p.s < 80) return;
     var busy = G.npcs.some(function (o) { return o.mode === "path" && o.dir < 0 && Math.abs(o.s - s) < 30; });
     if (!busy) G.npcs.push(new PathCar({ s: s, d: -3.5, dir: -1, v: (pc.limit - 6) / KMH }));
+  }
+  // A car ahead that brakes hard at one spot, then drives on.
+  function brakeFn(pc, a) {
+    var b0 = pc.s0 + a.brakeAt, vt = a.v / KMH;
+    return function (s) { return s > b0 && s < b0 + 35 ? 8 / KMH : vt; };
   }
   function queueFn(pc, a) {
     var q0 = pc.s0 + a.queue[0], q1 = q0 + a.queue[1], vt = a.v / KMH;
@@ -847,8 +880,8 @@
       }
       if (n.kind === "bus" && (n.busState === "wait" || n.busState === "signal")) vt = 0;
     }
-    if (n.ttl && n.kind === "tractor") {
-      // The tractor turns off onto a field road.
+    if (n.ttl && (n.kind === "tractor" || n.kind === "bike")) {
+      // The tractor turns off onto a field road, the cyclist onto a side street.
       if (n.s > n.ttl - 40) n.blink = 1;
       if (n.s > n.ttl) { n.td = 6; vt = Math.min(vt, 3); }
       if (n.d > 5.9) n.gone = true;
@@ -933,7 +966,7 @@
         continue;
       }
       if (overlap(me, boxOf(n, npcPose(n)))) {
-        var what = { ped: "en gående", stroll: "en gående", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
+        var what = { ped: "en gående", stroll: "en gående", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
@@ -1064,6 +1097,11 @@
       for (var z = -12; z < 12; z += 2) { ctx.beginPath(); ctx.moveTo(5.0, -bw - z); ctx.lineTo(4.4, -bw - z - 1); ctx.lineTo(5.0, -bw - z - 2); ctx.lineWidth = 0.15; ctx.strokeStyle = COL.yellow; ctx.stroke(); }
       ctx.fillStyle = COL.walk; ctx.fillRect(5.25, -bw - 14, 2.0, 28);
     }
+    (st.bumps || []).forEach(function (bw) {
+      ctx.fillStyle = "#62666c"; ctx.fillRect(-5.25, -bw - 2, 7, 4);
+      ctx.fillStyle = COL.paint;
+      for (var u = -4.9; u < 1.5; u += 1.6) { ctx.beginPath(); ctx.moveTo(u, -bw + 1.6); ctx.lineTo(u + 0.8, -bw + 1.6); ctx.lineTo(u + 0.4, -bw - 1.6); ctx.closePath(); ctx.fill(); }
+    });
     if (st.rail) {
       var rw = st.rail.s;
       ctx.fillStyle = "#8c8274"; ctx.fillRect(-60, -rw - 2.2, 120, 4.4);
@@ -1143,6 +1181,12 @@
     ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
     var hl = n.hl, hw = n.hw, kind = n.kind;
     ctx.fillStyle = "rgba(0,0,0,0.25)"; rr(-hw + 0.15, -hl + 0.25, hw * 2, hl * 2, 0.5); ctx.fill();
+    if (kind === "bike") {
+      ctx.fillStyle = "#222"; ctx.fillRect(-0.05, -hl, 0.1, hl * 2);
+      ctx.fillStyle = n.color; ctx.beginPath(); ctx.ellipse(0, 0.1, 0.32, 0.22, 0, 0, Math.PI * 2); ctx.fill();
+      disc("#f0c419", 0, 0.05, 0.15);
+      ctx.restore(); return;
+    }
     if (kind === "truck") {
       ctx.fillStyle = COL.white; rr(-hw, -hl, hw * 2, 2.4, 0.4); ctx.fill();
       ctx.fillStyle = COL.glass; ctx.fillRect(-hw + 0.2, -hl + 0.2, hw * 2 - 0.4, 0.6);
@@ -1439,6 +1483,67 @@
 
   // ---------- the lessons ----------
   // Distances in metres along each piece. Signs stand on the right; "speed" draws a speed limit sign.
+  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function makeFree() {
+    var steps = [], env = "stad", turn = 0;
+    var dirWord = { "0": "köra rakt fram", "1": "svänga höger", "-1": "svänga vänster" };
+    var hint = {
+      hoger: "Inga skyltar, så högerregeln gäller.",
+      stopp: "Det är stopplikt, så stanna helt vid linjen.",
+      vaj: "Vi har väjningsplikt där.",
+      huvud: "Vi kör på huvudled, de från sidan har väjningsplikt.",
+      ljus: "Det är trafikljus, och svänger vi vänster har mötande företräde."
+    };
+    steps.push({ type: "road", env: "stad", limit: 50, len: 110, signs: [{ s: 8, speed: 50 }],
+      say: [[0, "Fri körning! Jag säger vart vi ska, så följer du trafikreglerna. Lycka till."]] });
+    var n = 6 + Math.floor(Math.random() * 3);
+    for (var i = 0; i < n; i++) {
+      // A road with something on it, then a junction or a roundabout.
+      if (i === 3 && Math.random() < 0.7) {
+        env = env === "stad" ? "land" : "stad";
+        steps.push(env === "land"
+          ? { type: "road", env: "land", limit: 70, len: 260, signs: [{ s: 4, code: "E6" }, { s: 10, speed: 70 }], oncoming: [30, 150],
+              moose: Math.random() < 0.5 ? { s: 200 } : null, lanes: [0, -3.5],
+              ahead: Math.random() < 0.5 ? [{ s: 90, v: 25, kind: "tractor", ttl: 240 }] : [],
+              say: [[12, "Nu lämnar vi tätorten. Här gäller 70."]] }
+          : { type: "road", env: "stad", limit: 50, len: 160, signs: [{ s: 4, code: "E5" }, { s: 8, speed: 50 }],
+              say: [[10, "Vi kommer in i en tätort igen. 50 gäller."]] });
+      }
+      var road = { type: "road", len: 140 + Math.floor(Math.random() * 60), say: [] };
+      var extra = Math.random();
+      if (env === "stad") {
+        if (extra < 0.25) { road.zebra = { s: 50, peds: [{ side: pick(["right", "left"]) }] }; road.signs = [{ s: 48, code: "B3" }]; }
+        else if (extra < 0.45) { road.ahead = [{ s: 45, v: 17, kind: "bike", ttl: road.len - 12 }]; road.say.push([6, "Cyklist framför. Kör om först när det är fritt, och håll avstånd i sidled."]); }
+        else if (extra < 0.6) { road.bus = { s: 70 }; road.signs = [{ s: 60, code: "E22" }]; }
+        else if (extra < 0.72) { road.bumps = [60]; road.signs = [{ s: 30, code: "A9" }]; road.say.push([20, "Farthinder framåt, sakta in."]); }
+      } else if (extra < 0.4) { road.ahead = [{ s: 70, v: 60, brakeAt: 110 }]; road.say.push([8, "Håll avstånd till bilen framför."]); }
+      var round = Math.random() < 0.3;
+      var want;
+      if (round) {
+        want = pick([1, 2, 3]);
+        road.say.push([road.len - 95, "I cirkulationsplatsen tar vi avfart nummer " + want + ". Blinka höger efter avfarten före."]);
+        steps.push(road);
+        steps.push({ type: "round", want: want, good: "Bra i cirkulationsplatsen!", npcs: Math.random() < 0.7 ? [{ from: "left", to: "right" }] : [] });
+        turn += want === 1 ? 1 : want === 3 ? -1 : 0;
+      } else {
+        var ctrl = pick(env === "stad" ? ["hoger", "stopp", "vaj", "ljus", "huvud"] : ["vaj", "stopp", "huvud"]);
+        var opts = [0, 1, -1].filter(function (d) { return !(turn >= 1 && d === 1) && !(turn <= -1 && d === -1); });
+        want = pick(opts);
+        var tee = (ctrl === "stopp" || ctrl === "vaj") && want !== 0 && Math.random() < 0.5;
+        if (ctrl === "huvud") road.signs = (road.signs || []).concat([{ s: 15, code: "B4" }]);
+        road.say.push([road.len - 90, "I nästa korsning ska vi " + dirWord[want] + ". " + hint[ctrl]]);
+        steps.push(road);
+        var npcs = ctrl === "hoger" ? [{ from: "right", to: "straight" }] :
+          ctrl === "huvud" ? [{ from: "right", to: "straight", prio: false }] :
+          ctrl === "ljus" ? [] : [{ from: "left", to: "straight", eta: 1.2 }, { from: "right", to: "straight", eta: 1.6 }];
+        steps.push({ type: "junction", ctrl: ctrl, want: want, fwd: !tee, good: pick(["Bra!", "Snyggt.", "Fint kört."]), npcs: npcs });
+        turn += want;
+      }
+    }
+    steps.push({ type: "road", len: 130, finish: true, say: [[10, "Bra kört! Stanna här vid kanten, så är vi klara."]] });
+    return steps;
+  }
+
   var LESSONS = [
     { id: "stad", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
       steps: [
@@ -1506,11 +1611,29 @@
         { type: "junction", ctrl: "huvud", want: 0, good: "Bra, rakt fram på huvudleden.", npcs: [{ from: "right", to: "straight", prio: false }] },
         { type: "road", env: "stad", limit: 30, len: 230, parking: true, parked: [70, 82, 94, 130, 142, 168],
           signs: [{ s: 4, code: "E5" }, { s: 8, speed: 30 }, { s: 40, code: "A15" }], child: { s: 150 },
+          bumps: [210],
           say: [[6, "Vi kommer in i tätorten. Här ligger en skola, så det är 30. Var beredd på barn mellan bilarna."]] },
         { type: "road", limit: 40, len: 220, signs: [{ s: 6, speed: 40 }, { s: 100, code: "E22" }], bus: { s: 110 },
           say: [[8, "Bussen vid hållplatsen kommer att blinka för att köra ut. Här är det högst 50, så då ska du släppa ut den."]] },
-        { type: "road", len: 120, finish: true, say: [[10, "Det var sista lektionen. Stanna här vid kanten. Bra jobbat!"]] }
-      ] }
+        { type: "road", len: 120, finish: true, say: [[10, "Stanna här vid kanten. Bra jobbat!"]] }
+      ] },
+    { id: "vinter", name: "Vinterkörning", what: "Snö, halka, längre bromssträcka och cyklist", weather: "snow",
+      steps: [
+        { type: "road", env: "stad", limit: 50, len: 160, signs: [{ s: 8, speed: 50 }], ahead: [{ s: 70, v: 16, kind: "bike", color: "#2e86ab", ttl: 150 }],
+          say: [[0, "Det har snöat och vägen är hal. Bromssträckan blir mycket längre, så kör mjukt och håll avstånd."],
+                [30, "Cyklist framför. Kör om först när det är fritt, med ordentligt avstånd i sidled. Blinka vänster för att gå ut."]] },
+        { type: "road", len: 140, zebra: { s: 80, peds: [{ side: "left" }, { side: "right", dist: 40 }] }, signs: [{ s: 78, code: "B3" }],
+          say: [[10, "Övergångsställe. På halt väglag måste du börja bromsa mycket tidigare."]] },
+        { type: "road", env: "land", limit: 70, len: 330, signs: [{ s: 4, code: "E6" }, { s: 10, speed: 70 }, { s: 60, code: "A10" }],
+          ahead: [{ s: 120, v: 60, brakeAt: 230 }], oncoming: [40, 200],
+          say: [[12, "Här gäller 70, men på snö är det klokt att köra saktare. Varning för slirig väg."],
+                [80, "Bilen framför kan bromsa plötsligt. Håll minst sex sekunders avstånd på halt väglag."]] },
+        { type: "road", len: 160, signs: [{ s: 20, code: "A30" }],
+          say: [[10, "Cirkulationsplats. Vi ska rakt fram, andra avfarten. Sakta in i god tid."]] },
+        { type: "round", want: 2, good: "Bra, mjukt och lugnt.", npcs: [{ from: "left", to: "right" }] },
+        { type: "road", len: 150, finish: true, say: [[10, "Bra vinterkörning! Bromsa försiktigt och stanna här."]] }
+      ] },
+    { id: "fri", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
   ];
 
   // Hooks for automated checks.

@@ -202,7 +202,8 @@
   function tree(x, y, r) {
     var g = new T.Group();
     g.add(mesh(new T.CylinderGeometry(0.15, 0.22, 1.6, 5), mat(0x6b4a2f), 0, 0.8, 0));
-    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(0x3f6e30), 0, 1.4 + r * 0.8, 0);
+    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(snowy ? 0x4a6650 : 0x3f6e30), 0, 1.4 + r * 0.8, 0);
+    if (snowy) { var cap = mesh(new T.IcosahedronGeometry(r * 0.75, 0), mat(0xf2f5f7), 0, 1.4 + r * 1.35, 0); cap.scale.y = 0.6; g.add(cap); }
     top.scale.y = 1.25; g.add(top);
     return place(g, x, y, 0);
   }
@@ -410,6 +411,12 @@
         g.add(mesh(box(Wd, 3.2, L - 2.8), mat(0x9aa3b4), 0, 2.2, 1.4));
         g.add(mesh(box(Wd - 0.4, 0.15, 0.05), mat(0xd04030, true), 0, 0.9, n.hl + 0.01));
         wheels([-n.hl + 1.3, n.hl - 2.8, n.hl - 1.6], 0.5);
+      } else if (n.kind === "bike") {
+        [-0.55, 0.55].forEach(function (z) { var wh = mesh(cyl(0.34, 0.34, 0.05, 12), mat(0x1c1c1c), 0, 0.34, z); wh.rotation.z = Math.PI / 2; g.add(wh); });
+        g.add(mesh(box(0.05, 0.05, 1.0), mat(0x8a8e94), 0, 0.6, 0));
+        g.add(mesh(box(0.34, 0.6, 0.24), mat(col), 0, 1.25, 0.1));
+        g.add(mesh(box(0.2, 0.5, 0.2), mat(0x333840), 0, 0.75, 0.15));
+        g.add(mesh(new T.IcosahedronGeometry(0.13, 0), mat(0xf0c419), 0, 1.7, 0.05));
       } else if (n.kind === "tractor") {
         g.add(mesh(box(Wd - 0.6, 1.0, L), mat(0x2f8a3a), 0, 1.0, 0));
         g.add(mesh(box(Wd - 0.7, 1.3, 1.3), mat(0x303a4a), 0, 2.1, 0.5));
@@ -426,7 +433,8 @@
           var wh = mesh(new T.CylinderGeometry(0.33, 0.33, 0.22, 8), mat(0x1c1c1c), w[0] * (n.hw - 0.08), 0.33, w[1] * (n.hl - 0.8));
           wh.rotation.z = Math.PI / 2; g.add(wh);
         });
-        g.add(mesh(box(Wd - 0.3, 0.12, 0.05), mat(0xd04030, true), 0, 0.75, n.hl + 0.01));   // rear lights
+        g.userData.brake = new T.MeshBasicMaterial({ color: 0x7a2018 });
+        g.add(mesh(box(Wd - 0.3, 0.12, 0.05), g.userData.brake, 0, 0.75, n.hl + 0.01));   // rear lights, bright when braking
         if (n.kind === "amb") {
           g.userData.siren = [mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), -0.35, 1.65, -0.3),
                               mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), 0.35, 1.65, -0.3)];
@@ -451,6 +459,12 @@
       var pose = n.mode === "train" ? n.poly.at(n.t) : api.npcPose(n);
       g.position.x = pose.x; g.position.z = pose.y; g.rotation.y = -pose.a;
       if (n.mode === "walk" && n.kind !== "moose") g.position.y = Math.abs(Math.sin(G.t * 9)) * 0.05;
+      if (g.userData.brake) {
+        var dv = (g.userData.lastV != null ? g.userData.lastV - n.v : 0);
+        g.userData.lastV = n.v;
+        g.userData.brakeT = dv > 0.04 || (n.v < 0.3 && !n.parked) ? 0.4 : Math.max(0, (g.userData.brakeT || 0) - 0.016);
+        g.userData.brake.color.setHex(g.userData.brakeT > 0 ? 0xff2a1a : 0x7a2018);
+      }
       if (g.userData.blink) {
         var on = Math.floor(G.t * 2.6) % 2 === 1;
         g.userData.blink[0].color.setHex(n.blink < 0 && on ? 0xffa61e : 0x4a3a20);
@@ -465,13 +479,48 @@
     Object.keys(npcMeshes).forEach(function (k) { if (!seen[k]) { scene.remove(npcMeshes[k]); delete npcMeshes[k]; } });
   }
 
+  var snowy = false, flakes = null;
+  function setWeather(w) {
+    snowy = w === "snow";
+    var sky = snowy ? 0xd9dee2 : 0xc4dbec;
+    scene.background.setHex(sky); scene.fog.color.setHex(sky);
+    scene.fog.near = snowy ? 25 : 55; scene.fog.far = snowy ? 95 : 135;
+    grass.material = mat(snowy ? 0xe6ebee : 0x709c54);
+    if (flakes) { scene.remove(flakes); flakes = null; }
+    if (snowy) {
+      var n = 1600, pos = new Float32Array(n * 3);
+      for (var i = 0; i < n; i++) { pos[i * 3] = (Math.random() - 0.5) * 60; pos[i * 3 + 1] = Math.random() * 14; pos[i * 3 + 2] = (Math.random() - 0.5) * 60; }
+      var geo = new T.BufferGeometry(); geo.setAttribute("position", new T.BufferAttribute(pos, 3));
+      flakes = new T.Points(geo, new T.PointsMaterial({ color: 0xffffff, size: 0.09 }));
+      scene.add(flakes);
+    }
+  }
+  // Snow falls around the car; flakes that drop below the road start again at the top.
+  function updateSnow(p, dt) {
+    if (!flakes) return;
+    var a = flakes.geometry.attributes.position, arr = a.array;
+    for (var i = 0; i < arr.length; i += 3) {
+      arr[i + 1] -= dt * 1.4;
+      arr[i] += Math.sin((arr[i + 1] + i) * 0.7) * dt * 0.3;
+      if (arr[i + 1] < 0) arr[i + 1] += 14;
+    }
+    a.needsUpdate = true;
+    flakes.position.set(Math.round(p.x / 60) * 60, 0, Math.round(p.y / 60) * 60);
+    // keep flakes around the car: wrap each into the 60 m box centred on it
+    for (var j = 0; j < arr.length; j += 3) {
+      var wx = arr[j] + flakes.position.x - p.x, wz = arr[j + 2] + flakes.position.z - p.y;
+      if (wx > 30) arr[j] -= 60; else if (wx < -30) arr[j] += 60;
+      if (wz > 30) arr[j + 2] -= 60; else if (wz < -30) arr[j + 2] += 60;
+    }
+  }
+
   // ---------- each frame ----------
   function render(G, dt) {
     if (!renderer) init();
     if (failed) return;
     var api = window.SPEL.api;
     canvas.style.display = "";
-    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; camA = G.p.a; }
+    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; camA = G.p.a; setWeather(G.lesson.weather); }
     var p = G.p;
     // The ground texture follows the car, centred a little ahead.
     var fx = Math.sin(p.a), fy = -Math.cos(p.a);
@@ -499,7 +548,15 @@
     // Driver's eye: left of the centre of the car, a little behind its middle.
     camA += api.angDiff(p.a, camA) * Math.min(1, dt * 7);
     var rx = Math.cos(p.a), ry = Math.sin(p.a);
-    camera.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22, p.y - ry * 0.36 - fy * 0.2);
+    // A jolt over speed bumps, harder the faster the car goes.
+    var bump = 0;
+    G.course.feats.forEach(function (f) {
+      if (f.kind !== "bump") return;
+      var dd = f.s - (p.s + 0.9);
+      if (Math.abs(dd) < 2.2) bump += Math.cos(dd / 2.2 * Math.PI / 2) * Math.min(0.18, p.v * 0.012);
+    });
+    camera.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22 + bump, p.y - ry * 0.36 - fy * 0.2);
+    updateSnow(p, dt);
     camera.rotation.set(-0.04, -camA, 0);
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
