@@ -37,8 +37,11 @@
     camera = new T.PerspectiveCamera(70, 1, 0.05, 500);
     camera.rotation.order = "YXZ";
     scene.add(camera);
-    scene.add(new T.HemisphereLight(0xeaf3ff, 0x6a8a50, 1.0));
-    var sun = new T.DirectionalLight(0xfff4e0, 0.85); sun.position.set(40, 80, 25); scene.add(sun);
+    hemi = new T.HemisphereLight(0xeaf3ff, 0x6a8a50, 1.0); scene.add(hemi);
+    sun = new T.DirectionalLight(0xfff4e0, 0.85); sun.position.set(40, 80, 25); scene.add(sun);
+    // Headlights: a spot from the front of the car, longer with full beam.
+    beam = new T.SpotLight(0xfff2d6, 0, 70, 0.5, 0.55, 1.1); beam.position.set(0.36, -0.8, -3.5);
+    beam.target.position.set(0.36, -1.2, -25); camera.add(beam); camera.add(beam.target);
     buildSkyline();
     grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
     grass.rotation.x = -Math.PI / 2; scene.add(grass);
@@ -149,8 +152,8 @@
     renderer.setRenderTarget(null);
     cockpit.visible = true; ownCar.visible = false;
   }
-  function drawCluster(kmh, limit, blink, on) {
-    var key = kmh + "|" + limit + "|" + blink + "|" + on;
+  function drawCluster(kmh, limit, blink, on, high) {
+    var key = kmh + "|" + limit + "|" + blink + "|" + on + "|" + high;
     if (key === clusterKey) return;
     clusterKey = key;
     var x = clusterCv.getContext("2d"), W = 512, H = 176;
@@ -171,6 +174,8 @@
     x.fillStyle = "#e03832"; x.beginPath(); x.arc(440, 92, 38, 0, 7); x.fill();
     x.fillStyle = "#f8c628"; x.beginPath(); x.arc(440, 92, 28, 0, 7); x.fill();
     x.fillStyle = "#111"; x.font = "800 " + (limit >= 100 ? 24 : 30) + "px system-ui, sans-serif"; x.fillText(String(limit), 440, 94);
+    // Full beam lamp, blue.
+    if (high) { x.fillStyle = "#3f8cff"; x.font = "800 22px system-ui, sans-serif"; x.fillText("≡D", 300, 26); }
     // Blinker arrows.
     [-1, 1].forEach(function (d) {
       var lit = blink === d && on, ax = d < 0 ? 210 : 390;
@@ -558,17 +563,18 @@
     scene.add(forest);
     paintSky(false);
   }
-  function paintSky(snow) {
+  function paintSky(snow, dark) {
     var geo = skyDome.geometry, pos = geo.attributes.position, col = geo.attributes.color;
-    var top = new T.Color(snow ? 0xb8c2ca : 0x5d97d6), mid = new T.Color(snow ? 0xd9dee2 : 0xa9cbea), low = new T.Color(snow ? 0xd9dee2 : 0xc4dbec), c = new T.Color();
+    var top = new T.Color(dark ? 0x03050c : snow ? 0xb8c2ca : 0x5d97d6), mid = new T.Color(dark ? 0x081022 : snow ? 0xd9dee2 : 0xa9cbea),
+      low = new T.Color(dark ? 0x0b1222 : snow ? 0xd9dee2 : 0xc4dbec), c = new T.Color();
     for (var i = 0; i < pos.count; i++) {
       var y = pos.getY(i) / 420;
       if (y > 0.25) c.copy(mid).lerp(top, Math.min(1, (y - 0.25) / 0.6)); else c.copy(low).lerp(mid, Math.max(0, y / 0.25));
       col.setXYZ(i, c.r, c.g, c.b);
     }
     col.needsUpdate = true;
-    clouds.visible = !snow;
-    forest.children[0].material.color.setHex(snow ? 0xaab4b8 : 0x5f7f6a);
+    clouds.visible = !snow && !dark;
+    forest.children[0].material.color.setHex(dark ? 0x05080a : snow ? 0xaab4b8 : 0x5f7f6a);
   }
   function shadow(w, l) {
     var m = new T.Mesh(new T.PlaneGeometry(w, l), shadowMat);
@@ -576,14 +582,15 @@
   }
   var shadowMat = null;
 
-  var snowy = false, flakes = null;
+  var snowy = false, flakes = null, night = false, hemi, sun, beam;
   function setWeather(w) {
-    snowy = w === "snow";
-    var sky = snowy ? 0xd9dee2 : 0xc4dbec;
+    snowy = w === "snow"; night = w === "night";
+    var sky = night ? 0x0b1222 : snowy ? 0xd9dee2 : 0xc4dbec;
+    hemi.intensity = night ? 0.12 : 1.0; sun.intensity = night ? 0.03 : 0.85;
     scene.background.setHex(sky); scene.fog.color.setHex(sky);
-    scene.fog.near = snowy ? 25 : 55; scene.fog.far = snowy ? 95 : 135;
+    scene.fog.near = night ? 20 : snowy ? 25 : 55; scene.fog.far = night ? 110 : snowy ? 95 : 135;
     grass.material = mat(snowy ? 0xe6ebee : 0x709c54);
-    paintSky(snowy);
+    paintSky(snowy, night);
     if (flakes) { scene.remove(flakes); flakes = null; }
     if (snowy) {
       var n = 1600, pos = new Float32Array(n * 3);
@@ -666,7 +673,9 @@
     wheel.rotation.z = wheelA;
     stalk.rotation.z = -p.blink * 0.25;
     var pc = G.course.pieceAt(p.s);
-    drawCluster(Math.round(p.v * 3.6), G.limit || pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0);
+    beam.intensity = night ? (p.high ? 900 : 380) : 0; beam.distance = p.high ? 130 : 60; beam.angle = p.high ? 0.42 : 0.5;
+    beam.target.position.y = p.high ? -0.9 : -1.6;
+    drawCluster(Math.round(p.v * 3.6), G.limit || pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0, night && p.high);
     renderMirrors(p, camA);
     renderer.render(scene, camera);
   }

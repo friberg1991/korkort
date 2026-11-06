@@ -44,6 +44,25 @@ a { color: var(--accent); }
 .lesson .name { font-weight: 650; }
 .lesson .what { color: var(--dim); font-size: 14px; }
 .lesson .mark { flex: none; font-size: 13px; padding: 3px 8px; border-radius: 99px; }
+.mark.stars { color: var(--gold); font-size: 15px; letter-spacing: 1px; background: none; }
+.stars { color: var(--gold); font-size: 30px; letter-spacing: 4px; margin: 0 0 6px; }
+.newbadge { padding: 10px 12px; margin: 6px 0 12px; border-radius: 12px; background: rgba(255,192,64,0.14); color: var(--gold); font-weight: 650; }
+.badgebox { margin: 0 0 14px; }
+#badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; background: var(--panel); filter: grayscale(1); opacity: 0.35; }
+.badge.on { filter: none; opacity: 1; background: #2a2a18; }
+#badgeText { color: var(--dim); font-size: 13px; margin-top: 6px; }
+.quiz { margin: 14px 0 6px; padding: 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+.qhead { color: var(--accent); font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.qtext { font-weight: 600; margin-bottom: 10px; }
+.qans { display: block; width: 100%; text-align: left; padding: 11px 12px; margin: 0 0 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--btn); }
+.qans.right { background: rgba(47,158,90,0.35); border-color: var(--good); }
+.qans.wrong { background: rgba(192,68,63,0.35); border-color: var(--bad); }
+.qexpl { color: var(--dim); font-size: 15px; margin: 6px 0; }
+.replayBtn { display: inline-block; margin-top: 8px; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--btn); font-size: 14px; }
+#replayCv { position: static; display: block; width: 100%; height: min(60vh, 460px); border-radius: 14px; background: #709c54; }
+#replay { z-index: 30; }
+#hb { left: 156px; bottom: 74px; width: 52px; height: 40px; font-size: 18px; }
 .mark.ok { background: rgba(47,158,90,0.25); color: #7fe0a4; }
 .mark.no { background: rgba(192,68,63,0.25); color: #f0a09c; }
 .row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: var(--dim); }
@@ -111,6 +130,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   <div class="wrap">
     <div class="hero"><div class="car">🚗</div><h1>Övningskörning</h1></div>
     <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
+    <div class="badgebox"><div id="badges"></div><div id="badgeText"></div></div>
     <div id="lessons"></div>
     <label class="row"><input type="checkbox" id="opt3d"> 3D: kör inifrån bilen (bäst med mobilen på tvären)</label>
     <label class="row">Styrning <select id="optSteer"><option value="manual">Jag styr själv</option><option value="auto">Bilen följer vägen</option></select></label>
@@ -137,6 +157,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <button id="bl" type="button" aria-label="Blinka vänster">◀</button>
     <button id="br" type="button" aria-label="Blinka höger">▶</button>
     <button id="kl" type="button" aria-label="Blinka vänster">⇦</button>
+    <button id="hb" type="button" aria-label="Helljus" hidden>💡</button>
     <button id="kr" type="button" aria-label="Blinka höger">⇨</button>
     <button id="brake" type="button">BROMS</button>
     <button id="gas" type="button">GAS</button>
@@ -148,6 +169,15 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <span id="speed">0</span><span id="kmh">km/h</span>
     <div id="limit">50</div>
     <span class="blink" id="hudR">▶</span>
+  </div>
+</div>
+
+<div id="replay" class="screen" hidden>
+  <div class="wrap">
+    <h1>Repris</h1>
+    <p id="replayTitle"></p>
+    <canvas id="replayCv"></canvas>
+    <button class="btn primary" id="replayClose" type="button">Stäng</button>
   </div>
 </div>
 
@@ -163,14 +193,18 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 <div id="result" class="screen" hidden>
   <div class="wrap">
     <div id="verdict" class="verdict"></div>
+    <div id="stars" class="stars"></div>
+    <div id="newBadge" class="newbadge" hidden></div>
     <p id="summary"></p>
     <div id="faultList"></div>
+    <div id="quiz" class="quiz" hidden></div>
     <button class="btn primary" id="next" type="button">Nästa lektion</button>
     <button class="btn" id="again" type="button">Kör lektionen igen</button>
     <button class="btn" id="toMenu" type="button">Till lektionerna</button>
   </div>
 </div>
 
+<script src="data.js"></script>
 <script src="three.min.js"></script>
 <script src="spel3d.js"></script>
 <script src="spel.js"></script>
