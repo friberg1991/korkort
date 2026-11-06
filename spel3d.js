@@ -8,7 +8,7 @@
 (function () {
   if (!window.THREE) return;
   var T = window.THREE;
-  var GROUND_PX = 2048, GROUND_M = 160, AHEAD = 45;   // ground texture size and how far ahead its centre sits
+  var GROUND_PX = 2048, GROUND_M = 160, AHEAD = 30;   // ground texture size and how far ahead its centre sits
   var renderer = null, scene, camera, cockpit, wheel, grass, ground, groundCv, groundTex, gctx, canvas;
   var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
   var camA = 0, wheelA = 0, prevA = null, failed = false;
@@ -56,24 +56,112 @@
   // The inside of the red car: dashboard, steering wheel, bonnet and pillars, fixed to the camera.
   function buildCockpit() {
     cockpit = new T.Group(); camera.add(cockpit);
-    var dark = mat(0x23272c), darker = mat(0x16191c), red = mat(0xe03832);
-    cockpit.add(mesh(box(2.6, 0.32, 0.7), dark, 0.35, -0.52, -0.85));        // dashboard
-    cockpit.add(mesh(box(2.6, 0.04, 0.12), darker, 0.35, -0.35, -1.18));       // its front edge, by the windscreen
-    var hood = mesh(box(1.8, 0.12, 2.0), red, 0.35, -0.72, -2.2); cockpit.add(hood);
-    [[-0.62, -0.95], [1.35, -1.0]].forEach(function (q) {                    // windscreen pillars
-      var pil = mesh(box(0.08, 1.4, 0.08), darker, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
+    var dash = mat(0x2a2e33), dashTop = mat(0x1d2024), trim = mat(0x3a3f45), liner = mat(0xb9b3a7), door = mat(0x4a4f56), red = mat(0xe03832);
+    // Dashboard: a long body, a darker top under the windscreen and a hump over the gauges.
+    cockpit.add(mesh(box(2.6, 0.34, 0.75), dash, 0.35, -0.54, -0.88));
+    cockpit.add(mesh(box(2.6, 0.05, 0.5), dashTop, 0.35, -0.38, -1.05));
+    cockpit.add(mesh(box(0.6, 0.2, 0.28), dashTop, 0, -0.31, -0.88));
+    // Bonnet in front.
+    cockpit.add(mesh(box(1.8, 0.12, 2.0), red, 0.35, -0.74, -2.25));
+    // Instrument cluster behind the wheel: speed, limit and blinker arrows, drawn into a canvas.
+    clusterCv = document.createElement("canvas"); clusterCv.width = 512; clusterCv.height = 176;
+    clusterTex = new T.CanvasTexture(clusterCv); if (T.SRGBColorSpace) clusterTex.colorSpace = T.SRGBColorSpace;
+    var cl = new T.Mesh(new T.PlaneGeometry(0.5, 0.172), new T.MeshBasicMaterial({ map: clusterTex }));
+    cl.position.set(0, -0.2, -0.74); cl.rotation.x = -0.12; cockpit.add(cl);
+    // Centre screen and air vents.
+    cockpit.add(mesh(box(0.3, 0.19, 0.03), mat(0x111417), 0.5, -0.33, -0.7));
+    var scr = mesh(new T.PlaneGeometry(0.27, 0.16), new T.MeshBasicMaterial({ color: 0x1f4257 }), 0.5, -0.33, -0.684); cockpit.add(scr);
+    cockpit.add(mesh(box(0.2, 0.012, 0.004), new T.MeshBasicMaterial({ color: 0x5fb3d9 }), 0.47, -0.3, -0.68));
+    cockpit.add(mesh(box(0.12, 0.012, 0.004), new T.MeshBasicMaterial({ color: 0x3e7f9e }), 0.44, -0.33, -0.68));
+    [[0.28, -0.29], [0.72, -0.29], [-0.42, -0.31]].forEach(function (v) { cockpit.add(mesh(box(0.14, 0.06, 0.03), mat(0x14171a), v[0], v[1], -0.72)); });
+    // Door on the left, with window sill and handle.
+    cockpit.add(mesh(box(0.08, 0.5, 1.3), door, -0.66, -0.55, -0.35));
+    cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, -0.63, -0.29, -0.35));
+    cockpit.add(mesh(box(0.03, 0.04, 0.16), mat(0x8c9198), -0.61, -0.4, -0.3));
+    // Windscreen pillars, roof lining and sun visors.
+    [[-0.62, -0.95], [1.35, -1.0]].forEach(function (q) {
+      var pil = mesh(box(0.1, 1.4, 0.1), trim, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
     });
-    cockpit.add(mesh(box(2.4, 0.12, 0.5), darker, 0.35, 0.62, -0.75));       // roof edge
-    // Steering wheel in front of the driver.
-    var holder = new T.Group(); holder.position.set(0, -0.3, -0.6); holder.rotation.x = -0.42; cockpit.add(holder);
+    cockpit.add(mesh(box(2.4, 0.1, 0.9), liner, 0.35, 0.62, -0.5));
+    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, -0.15, 0.55, -0.82));
+    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, 0.85, 0.55, -0.85));
+    // Mirrors: rear-view in the middle of the roof edge, one on each door. Their pictures come from cameras looking back.
+    mirrors = [
+      makeMirror(0.38, 0.17, -0.72, 0.36, 0.1, 30, 0x16191c, 0.6),
+      makeMirror(-0.86, -0.04, -0.98, 0.2, 0.13, 38, 0x2a2e33, 0.35),
+      makeMirror(0.98, -0.05, -1.12, 0.2, 0.13, 38, 0x2a2e33, -0.35)
+    ];
+    cockpit.add(mesh(box(0.02, 0.4, 0.02), trim, 0.38, 0.4, -0.74));
+    // Steering wheel and the blinker stalk on its left.
+    var holder = new T.Group(); holder.position.set(0, -0.38, -0.56); holder.rotation.x = -0.42; cockpit.add(holder);
+    var column = mesh(new T.CylinderGeometry(0.035, 0.05, 0.25, 8), mat(0x1b1e22), 0, 0, -0.13); column.rotation.x = Math.PI / 2; holder.add(column);
+    stalk = new T.Group(); stalk.position.set(-0.05, 0, -0.07); holder.add(stalk);
+    stalk.add(mesh(box(0.15, 0.015, 0.015), mat(0x2c3136), -0.075, 0, 0));
     wheel = new T.Group(); holder.add(wheel);
-    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.024, 6, 18), mat(0x1b1e22)));
-    [0, 2.1, -2.1].forEach(function (a) {
-      var sp = mesh(box(0.025, 0.17, 0.02), mat(0x2c3136), Math.sin(a) * 0.09, -Math.cos(a) * 0.09, 0);
+    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.03, 8, 24), mat(0x202326)));
+    [0, 2.0, -2.0].forEach(function (a) {
+      var sp = mesh(box(0.05, 0.15, 0.02), mat(0x34393f), Math.sin(a) * 0.1, -Math.cos(a) * 0.1, 0);
       sp.rotation.z = a; wheel.add(sp);
     });
-    var hub = mesh(new T.CylinderGeometry(0.05, 0.05, 0.04, 8), mat(0x2c3136)); hub.rotation.x = Math.PI / 2; wheel.add(hub);
-    wheel.add(mesh(box(0.04, 0.04, 0.03), mat(0xe03832), 0, 0.19, 0.01));  // top mark, shows the wheel turning
+    var hub = mesh(new T.CylinderGeometry(0.065, 0.07, 0.05, 10), mat(0x2c3136)); hub.rotation.x = Math.PI / 2; wheel.add(hub);
+    var logo = mesh(new T.CylinderGeometry(0.02, 0.02, 0.012, 10), mat(0x9aa0a6), 0, 0, 0.03); logo.rotation.x = Math.PI / 2; wheel.add(logo);
+    wheel.add(mesh(box(0.05, 0.03, 0.035), mat(0xb8b2a6), 0, 0.19, 0.0));   // stitching mark at the top
+  }
+  var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk;
+
+  function makeMirror(x, y, z, w, h, fov, frame, yaw) {
+    var rt = new T.WebGLRenderTarget(256, Math.round(256 * h / w));
+    if (T.SRGBColorSpace) rt.texture.colorSpace = T.SRGBColorSpace;
+    rt.texture.wrapS = T.RepeatWrapping; rt.texture.repeat.x = -1; rt.texture.offset.x = 1;   // a mirror shows things the other way round
+    var g = new T.Group(); g.position.set(x, y, z); g.rotation.y = yaw * 0.4;
+    g.add(mesh(box(w + 0.03, h + 0.03, 0.03), mat(frame), 0, 0, -0.02));
+    var face = new T.Mesh(new T.PlaneGeometry(w, h), new T.MeshBasicMaterial({ map: rt.texture }));
+    face.position.z = 0.001; g.add(face);
+    cockpit.add(g);
+    var cam = new T.PerspectiveCamera(fov, w / h, 0.3, 200); cam.rotation.order = "YXZ";
+    return { rt: rt, cam: cam, side: x < 0 ? -1 : x > 0.6 ? 1 : 0, g: g };
+  }
+  function renderMirrors(p, a) {
+    var fx = Math.sin(a), fy = -Math.cos(a), rx = Math.cos(a), ry = Math.sin(a);
+    cockpit.visible = false;
+    mirrors.forEach(function (m) {
+      var off = m.side === 0 ? 0 : m.side * 1.0, fwd = m.side === 0 ? -0.6 : 0.4;
+      m.cam.position.set(p.x + rx * off + fx * fwd, m.side === 0 ? 1.3 : 1.05, p.y + ry * off + fy * fwd);
+      m.cam.rotation.set(-0.03, Math.PI - a - m.side * 0.12, 0);
+      renderer.setRenderTarget(m.rt); renderer.render(scene, m.cam);
+    });
+    renderer.setRenderTarget(null);
+    cockpit.visible = true;
+  }
+  function drawCluster(kmh, limit, blink, on) {
+    var key = kmh + "|" + limit + "|" + blink + "|" + on;
+    if (key === clusterKey) return;
+    clusterKey = key;
+    var x = clusterCv.getContext("2d"), W = 512, H = 176;
+    x.fillStyle = "#07090c"; x.fillRect(0, 0, W, H);
+    // Speed dial on the left, 0 to 160.
+    var cx = 120, cy = 104, R = 78;
+    x.lineWidth = 6; x.strokeStyle = "#2b3238"; x.beginPath(); x.arc(cx, cy, R, Math.PI * 0.8, Math.PI * 2.2); x.stroke();
+    x.strokeStyle = "#0cd29d"; x.beginPath(); x.arc(cx, cy, R, Math.PI * 0.8, Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160)); x.stroke();
+    x.fillStyle = "#8a9299"; x.font = "600 15px system-ui, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+    for (var v = 0; v <= 160; v += 40) { var aa = Math.PI * (0.8 + 1.4 * v / 160); x.fillText(String(v), cx + Math.cos(aa) * (R - 22), cy + Math.sin(aa) * (R - 22)); }
+    var na = Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160);
+    x.strokeStyle = "#ff5a3c"; x.lineWidth = 4; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(na) * (R - 8), cy + Math.sin(na) * (R - 8)); x.stroke();
+    // Speed in figures in the middle; red when over the limit.
+    x.fillStyle = kmh > limit + 3 ? "#ff8a80" : "#f2f4f5"; x.font = "800 64px system-ui, sans-serif"; x.fillText(String(kmh), 300, 92);
+    x.fillStyle = "#8a9299"; x.font = "600 17px system-ui, sans-serif"; x.fillText("km/h", 300, 136);
+    // The speed limit, as the car's sign reading shows it.
+    x.fillStyle = "#fff"; x.beginPath(); x.arc(440, 92, 40, 0, 7); x.fill();
+    x.fillStyle = "#e03832"; x.beginPath(); x.arc(440, 92, 38, 0, 7); x.fill();
+    x.fillStyle = "#f8c628"; x.beginPath(); x.arc(440, 92, 28, 0, 7); x.fill();
+    x.fillStyle = "#111"; x.font = "800 " + (limit >= 100 ? 24 : 30) + "px system-ui, sans-serif"; x.fillText(String(limit), 440, 94);
+    // Blinker arrows.
+    [-1, 1].forEach(function (d) {
+      var lit = blink === d && on, ax = d < 0 ? 210 : 390;
+      x.fillStyle = lit ? "#3ee07a" : "#1e2a22"; x.beginPath();
+      x.moveTo(ax + d * 22, 26); x.lineTo(ax, 10); x.lineTo(ax, 18); x.lineTo(ax - d * 16, 18); x.lineTo(ax - d * 16, 34); x.lineTo(ax, 34); x.lineTo(ax, 42); x.closePath(); x.fill();
+    });
+    clusterTex.needsUpdate = true;
   }
 
   function resize() {
@@ -91,7 +179,7 @@
     Object.keys(npcMeshes).forEach(function (k) { scene.remove(npcMeshes[k]); });
     signMeshes.forEach(function (o) { scene.remove(o.obj); });
     lightSets.forEach(function (o) { o.groups.forEach(function (g) { scene.remove(g); }); });
-    objs = []; npcMeshes = {}; signMeshes = []; lightSets = []; groundAt = null; prevA = null;
+    objs = []; npcMeshes = {}; signMeshes = []; lightSets = []; railSets = []; groundAt = null; prevA = null;
   }
 
   // ---------- things along the road ----------
@@ -189,10 +277,42 @@
     });
   }
 
+  // Level crossing: a lamp post on each side and a barrier arm that swings up.
+  var railSets = [];
+  function buildRail(api, G, f) {
+    var pose = G.course.poseAt(f.s), set = { f: f, lamps: [], arms: [] };
+    [[3.0, -5, 0], [-8.0, 5, Math.PI]].forEach(function (o) {
+      var q = api.toG(pose, o[0], o[1]), g = new T.Group();
+      g.add(mesh(new T.CylinderGeometry(0.07, 0.07, 2.8, 6), mat(0x55595e), 0, 1.4, 0));
+      g.add(mesh(box(1.0, 0.45, 0.2), mat(0x15181c), 0, 2.6, 0));
+      [-0.27, 0.27].forEach(function (x) {
+        var m = new T.MeshBasicMaterial({ color: 0x40262a }), l = mesh(new T.CylinderGeometry(0.15, 0.15, 0.05, 10), m, x, 2.6, 0.13);
+        l.rotation.x = Math.PI / 2; g.add(l); set.lamps.push(m);
+      });
+      g.position.set(q.x, 0, q.y); g.rotation.y = -(pose.a + o[2]); scene.add(g); objs.push(g);
+    });
+    [[2.6, -5, 1], [-6.1, 5, -1]].forEach(function (b) {
+      var q = api.toG(pose, b[0], b[1]), base = new T.Group();
+      base.add(mesh(box(0.35, 1.1, 0.35), mat(0xeceef0), 0, 0.55, 0));
+      var pivot = new T.Group(); pivot.position.y = 1.0; base.add(pivot);
+      for (var i = 0; i < 5; i++) pivot.add(mesh(box(0.8, 0.12, 0.08), mat(i % 2 ? 0xe03832 : 0xeceef0), -b[2] * (i * 0.8 + 0.4), 0, 0));
+      base.position.set(q.x, 0, q.y); base.rotation.y = -pose.a; scene.add(base); objs.push(base);
+      set.arms.push({ pivot: pivot, side: b[2] });
+    });
+    return set;
+  }
+  function updateRails(api, G) {
+    railSets.forEach(function (set) {
+      var f = set.f, down = api.barrierDown(f), blink = f.state !== "open" ? Math.floor(G.t * 3) % 2 : -1;
+      set.lamps.forEach(function (m, i) { m.color.setHex(blink === i % 2 ? 0xff3b30 : 0x40262a); });
+      set.arms.forEach(function (a) { a.pivot.rotation.z = -a.side * (1 - down) * Math.PI / 2; });
+    });
+  }
+
   // ---------- road users ----------
   function makeNpc(n) {
     var g = new T.Group(), col = n.color || "#286ee0";
-    if (n.kind === "ped" || n.kind === "child") {
+    if (n.kind === "ped" || n.kind === "child" || n.kind === "stroll") {
       var h = n.kind === "child" ? 1.15 : 1.7;
       g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
       g.add(mesh(box(0.28, h * 0.45, 0.2), mat(0x333840), 0, h * 0.22, 0));
@@ -295,6 +415,10 @@
     G.course.signs.forEach(function (sg) {
       if (!sg.built3d && Math.abs(sg.s - p.s) < 220) { sg.built3d = true; signMeshes.push({ obj: buildSign(api, G, sg) }); }
     });
+    G.course.feats.forEach(function (f) {
+      if (f.kind === "rail" && !f.built3d && Math.abs(f.s - p.s) < 260) { f.built3d = true; railSets.push(buildRail(api, G, f)); }
+    });
+    updateRails(api, G);
     updateLights(api);
     updateNpcs(api, G);
     grass.position.x = p.x; grass.position.z = p.y;
@@ -309,6 +433,10 @@
     var want = Math.max(-2.6, Math.min(2.6, -rate * 2.2));
     wheelA += (want - wheelA) * Math.min(1, dt * 6);
     wheel.rotation.z = wheelA;
+    stalk.rotation.z = -p.blink * 0.25;
+    var pc = G.course.pieceAt(p.s);
+    drawCluster(Math.round(p.v * 3.6), pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0);
+    renderMirrors(p, camA);
     renderer.render(scene, camera);
   }
 

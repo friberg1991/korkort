@@ -247,7 +247,7 @@
     this.stopT = o.stopT; this.blink = o.blink || 0; this.hl = 2.2; this.hw = 0.9; this.owner = o.owner || null;
   }
   function Walker(o) {
-    this.id = nextId++; this.mode = "walk"; this.kind = o.kind || "ped"; this.s = o.s; this.u = o.u; this.vu = o.vu; this.go = false;
+    this.id = nextId++; this.mode = "walk"; this.kind = o.kind || "ped"; this.s = o.s; this.u = o.u; this.vu = o.vu || 0; this.vs = o.vs || 0; this.go = false;
     this.color = o.color || ["#d1495b", "#2e86ab", "#f18f01", "#6a4c93", "#3d9970"][this.id % 5];
     this.hl = this.kind === "moose" ? 1.4 : 0.35; this.hw = this.kind === "moose" ? 0.55 : 0.3;
     this.owner = o.owner || null; this.trigger = o.trigger; this.ttl = 0;
@@ -565,6 +565,7 @@
         if (b.kind === "amb") say("Jag hör sirener! Utryckningsfordon bakifrån. Blinka höger så kör du åt sidan och saktar in.", "", true);
       }
     });
+    extraLife(pc, dt, t);
     if (st.moose && !pc.mooseOn && t >= st.moose.s - 85) {
       pc.mooseOn = true;
       G.npcs.push(new Walker({ kind: "moose", s: pc.s0 + st.moose.s, u: 14, vu: -3.4, owner: pc, trigger: 0 }));
@@ -587,6 +588,33 @@
       if (p.v * KMH < 65) fault("merge", "Du körde in på motorvägen för sakta. Gasa upp i accelerationsfältet.", false);
       else praise("Bra påfart!");
     }
+  }
+  // More traffic and more people than the lesson itself has, from the menu settings.
+  function extraLife(pc, dt, t) {
+    var p = G.p, lvT = store.traffic || 0, lvP = store.walkers || 0;
+    if (pc.env === "stad" && lvP && !pc.strollers && t > -150) {
+      pc.strollers = true;
+      var r = rng(pc.s0 + 5), n = Math.round(pc.len / 45 * lvP);
+      for (var i = 0; i < n; i++) {
+        var right = r() < 0.5, u = right ? 3.05 + (pc.parking ? 2.5 : 0) : -6.55;
+        var wk = new Walker({ kind: "stroll", s: pc.s0 + 10 + r() * (pc.len - 20), u: u, vs: (r() < 0.5 ? -1 : 1) * (1.0 + r() * 0.5) });
+        wk.lo = pc.s0 + 4; wk.hi = pc.s0 + pc.len - 4; G.npcs.push(wk);
+      }
+    }
+    if (!lvT || t < 0 || t > pc.len) return;
+    pc.extraT = (pc.extraT || 0) - dt;
+    if (pc.extraT > 0) return;
+    pc.extraT = (lvT === 1 ? 8 : 4) * (0.7 + Math.random() * 0.6);
+    var course = G.course, s = Math.min(p.s + 230, course.endS - 4);
+    if (pc.kind === "mv") {
+      G.npcs.push(new PathCar({ s: s, d: Math.random() < 0.5 ? -14.35 : -17.85, dir: -1, v: (100 + Math.random() * 20) / KMH }));
+      var free = !G.npcs.some(function (o) { return o.mode === "path" && o.dir > 0 && Math.abs(o.d + 3.5) < 1 && Math.abs(o.s - (p.s - 110)) < 30; });
+      if (free && Math.random() < 0.6) G.npcs.push(new PathCar({ s: p.s - 110, d: -3.5, v: 125 / KMH }));
+      return;
+    }
+    if (s - p.s < 80) return;
+    var busy = G.npcs.some(function (o) { return o.mode === "path" && o.dir < 0 && Math.abs(o.s - s) < 30; });
+    if (!busy) G.npcs.push(new PathCar({ s: s, d: -3.5, dir: -1, v: (pc.limit - 6) / KMH }));
   }
   function queueFn(pc, a) {
     var q0 = pc.s0 + a.queue[0], q1 = q0 + a.queue[1], vt = a.v / KMH;
@@ -749,7 +777,9 @@
     if (f.kind === "zebra") {
       if (!f.started && f.s - p.s < (f.peds[0] && f.peds[0].dist || 48)) {
         f.started = true;
-        f.peds.forEach(function (pd, i) {
+        var list = f.peds.slice(), extra = [0, 1, 3][store.walkers || 0];
+        for (var e = 0; e < extra; e++) list.push({ side: e % 2 ? "right" : "left" });
+        list.forEach(function (pd, i) {
           var fromRight = pd.side !== "left";
           G.npcs.push(new Walker({ s: f.s + (i % 2 ? 0.6 : -0.6), u: fromRight ? 4.2 + i * 1.2 : -8.7 - i * 1.2, vu: fromRight ? -1.35 : 1.35, owner: f }));
         });
@@ -838,7 +868,8 @@
     }
     if (n.mode === "poly" || n.mode === "train") return n.poly.at(n.t);
     var w = G.course.poseAt(n.s);
-    return { x: w.x + Math.cos(w.a) * n.u, y: w.y + Math.sin(w.a) * n.u, a: w.a + (n.vu < 0 ? -Math.PI / 2 : Math.PI / 2) };
+    var wa = n.kind === "stroll" ? w.a + (n.vs < 0 ? Math.PI : 0) : w.a + (n.vu < 0 ? -Math.PI / 2 : Math.PI / 2);
+    return { x: w.x + Math.cos(w.a) * n.u, y: w.y + Math.sin(w.a) * n.u, a: wa };
   }
   function updatePolyCar(n, dt) {
     var vt = n.vt;
@@ -855,6 +886,13 @@
   function updateWalker(n, dt) {
     var p = G.p;
     n.u += n.vu * dt;
+    if (n.kind === "stroll") {
+      // Walks along its own block and turns round at the corners.
+      n.s += n.vs * dt;
+      if ((n.s < n.lo && n.vs < 0) || (n.s > n.hi && n.vs > 0)) n.vs = -n.vs;
+      if (Math.abs(n.s - p.s) > 220) n.gone = true;
+      return;
+    }
     if (n.kind === "moose" || n.kind === "child") {
       if (!n.done && (n.vu < 0 ? n.u < -9 : n.u > 4)) {
         n.done = true;
@@ -895,7 +933,7 @@
         continue;
       }
       if (overlap(me, boxOf(n, npcPose(n)))) {
-        var what = { ped: "en gående", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
+        var what = { ped: "en gående", stroll: "en gående", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
@@ -1221,10 +1259,13 @@
       });
     });
   }
+  function barrierDown(f) {
+    return f.state === "down" ? 1 : f.state === "warn" ? clamp((f.t - 1.5) / 1.5, 0, 1) : f.state === "up" ? 1 - clamp(f.t / 2, 0, 1) : 0;
+  }
   function drawBarriers() {
     G.course.feats.forEach(function (f) {
       if (f.kind !== "rail" || Math.abs(f.s - G.p.s) > 250) return;
-      var down = f.state === "down" ? 1 : f.state === "warn" ? clamp((f.t - 1.5) / 1.5, 0, 1) : f.state === "up" ? 1 - clamp(f.t / 2, 0, 1) : 0;
+      var down = barrierDown(f);
       var pose = G.course.poseAt(f.s);
       [[2.6, -5, 1], [-6.1, 5, -1]].forEach(function (b) {
         var base = toG(pose, b[0], b[1]);
@@ -1317,6 +1358,7 @@
     updateCam(dt);
     var use3d = store.view3d && window.SPEL3D && window.SPEL3D.ready();
     cv.style.display = use3d ? "none" : "";
+    document.getElementById("hud").style.display = use3d ? "none" : "";
     if (use3d) { window.SPEL3D.render(G, dt); drawHud(); }
     else { if (window.SPEL3D) window.SPEL3D.hide(); draw(); }
     viewBtn.textContent = use3d ? "2D" : "3D";
@@ -1366,9 +1408,13 @@
     var v = document.getElementById("optVoice"), s = document.getElementById("optSound");
     v.checked = !!store.voice; s.checked = !!store.sound;
     document.getElementById("opt3d").checked = !!store.view3d;
+    document.getElementById("optTraffic").value = String(store.traffic || 0);
+    document.getElementById("optWalkers").value = String(store.walkers || 0);
     document.getElementById("pad").hidden = false;
   }
   document.getElementById("optVoice").addEventListener("change", function (e) { store.voice = e.target.checked; saveStore(); if (store.voice) speak("Hej! Jag är din lärare."); });
+  document.getElementById("optTraffic").addEventListener("change", function (e) { store.traffic = +e.target.value; saveStore(); });
+  document.getElementById("optWalkers").addEventListener("change", function (e) { store.walkers = +e.target.value; saveStore(); });
   document.getElementById("opt3d").addEventListener("change", function (e) { store.view3d = e.target.checked; saveStore(); });
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);
@@ -1461,7 +1507,7 @@
   // Hooks for automated checks.
   window.SPEL = { lessons: LESSONS, start: startLesson, state: function () { return G; }, keys: keys, setBlink: setBlink,
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");

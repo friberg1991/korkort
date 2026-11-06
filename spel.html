@@ -43,6 +43,7 @@ a { color: var(--accent); }
 .mark.no { background: rgba(192,68,63,0.25); color: #f0a09c; }
 .row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: var(--dim); }
 .row input { width: 20px; height: 20px; accent-color: var(--accent); }
+.row select { margin-left: auto; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--btn); color: var(--text); font: inherit; font-size: 15px; }
 .keys { font-size: 14px; color: var(--dim); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .btn { display: block; width: 100%; padding: 13px; margin: 8px 0 0; border: 0; border-radius: 12px; background: var(--btn); text-align: center; text-decoration: none; color: var(--text); }
 .btn.primary { background: var(--accent); color: #06231a; font-weight: 700; }
@@ -99,6 +100,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
     <div id="lessons"></div>
     <label class="row"><input type="checkbox" id="opt3d"> 3D: kör inifrån bilen (bäst med mobilen på tvären)</label>
+    <label class="row">Trafik <select id="optTraffic"><option value="0">Som vanligt</option><option value="1">Mer</option><option value="2">Mycket</option></select></label>
+    <label class="row">Fotgängare <select id="optWalkers"><option value="0">Som vanligt</option><option value="1">Fler</option><option value="2">Många</option></select></label>
     <label class="row"><input type="checkbox" id="optVoice"> Läraren pratar (uppläsning)</label>
     <label class="row"><input type="checkbox" id="optSound"> Ljud (blinkers, sirener)</label>
     <div class="keys" id="keysHelp">
