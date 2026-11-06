@@ -271,6 +271,23 @@
         });
       }
     }
+    if (st.works) {
+      for (var cw = st.works.s; cw <= st.works.s + st.works.len; cw += 4) {
+        var qc = at(-1.45, cw), cone = new T.Group();
+        cone.add(mesh(cyl(0.02, 0.22, 0.7, 8), mat(0xff7a1a), 0, 0.35, 0));
+        cone.add(mesh(cyl(0.11, 0.15, 0.12, 8), mat(0xffffff), 0, 0.38, 0));
+        place(cone, qc.x, qc.y, 0);
+      }
+      var qb = at(0.2, st.works.s), bar = new T.Group();
+      for (var k = 0; k < 6; k++) bar.add(mesh(box(0.55, 0.3, 0.06), mat(k % 2 ? 0x111111 : 0xf8c628), -1.4 + k * 0.55, 0.9, 0));
+      [-1.5, 1.4].forEach(function (x) { bar.add(mesh(box(0.06, 0.9, 0.06), mat(0xeceef0), x, 0.45, 0)); });
+      place(bar, qb.x, qb.y, pc.P.a);
+      var qd = at(0.3, st.works.s + st.works.len / 2), dig = new T.Group();
+      dig.add(mesh(box(1.6, 1.0, 3.0), mat(0xf2b31b), 0, 0.9, 0));
+      dig.add(mesh(box(1.2, 1.0, 1.2), mat(0x303a4a), 0, 1.9, 0.6));
+      dig.add(mesh(box(0.25, 0.25, 2.6), mat(0xf2b31b), 0, 2.2, -1.6));
+      place(dig, qd.x, qd.y, pc.P.a + 0.3);
+    }
     if (st.bus) {
       var b = at(7.2, st.bus.s), shelter = new T.Group();
       shelter.add(mesh(box(1.6, 0.1, 4.2), mat(0x3a3f45), 0, 2.4, 0));
@@ -303,7 +320,7 @@
     return (imgTex[code] = t);
   }
   function buildSign(api, G, sg) {
-    var pose = G.course.poseAt(sg.s), q = api.toG(pose, sg.u, 0), g = new T.Group();
+    var pose = sg.pos || G.course.poseAt(sg.s), q = sg.pos || api.toG(pose, sg.u, 0), g = new T.Group();
     g.add(mesh(new T.CylinderGeometry(0.04, 0.04, 2.2, 6), mat(0x8a8e94), 0, 1.1, 0));
     var tex = sg.speed ? speedTexture(sg.speed) : signTexture(api, sg.code);
     var face = new T.Mesh(new T.PlaneGeometry(1.15, 1.15), new T.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.3, fog: true }));

@@ -119,7 +119,7 @@
   Course.prototype.poseAt = function (s) { var pc = this.pieceAt(s); return pc.poseAt(s - pc.s0); };
   Course.prototype.addSign = function (s, sg, env) {
     var u = sg.u != null ? sg.u : env === "stad" ? 3.3 : env === "mv" ? 6.2 : 4.4;
-    this.signs.push({ s: s, code: sg.code, speed: sg.speed, u: u, img: sg.code ? signImg(sg.code) : null });
+    this.signs.push({ s: s, code: sg.code, speed: sg.speed, u: u, img: sg.code ? signImg(sg.code) : null, pos: sg.pos || null });
   };
 
   function basePiece(st, course, kind) {
@@ -198,6 +198,12 @@
     pc.endPose = function () { return pc.poly.at(pc.poly.len); };
     if (st.ctrl === "stopp") course.addSign(pc.s0 - 1, { code: "B2" }, pc.env);
     if (st.ctrl === "vaj") course.addSign(pc.s0 - 1, { code: "B1" }, pc.env);
+    // Signs for one arm: they stand where that road starts and face the cars turning into it.
+    (st.armSigns || []).forEach(function (as) {
+      var al = armOf(as.arm), dir = { x: Math.cos(al * DEG), y: Math.sin(al * DEG) }, rn = { x: dir.y, y: -dir.x };
+      var q = toG(pc.C, dir.x * (JH + 1.5) + rn.x * (HW + 1.6), dir.y * (JH + 1.5) + rn.y * (HW + 1.6));
+      course.addSign(pc.s0, { code: as.code, pos: { x: q.x, y: q.y, a: pc.C.a + (90 - al) * DEG } }, pc.env);
+    });
     return pc;
   }
 
@@ -450,6 +456,8 @@
       if (st.dec && t > st.dec[0] && t < st.dec[1]) out.push(3.5);
     }
     if (G.ambActive && pc.kind === "road") out.push(1.3);
+    if (st.works && t > st.works.s - 60 && t < st.works.s + st.works.len + 10) out.push(-3.5);
+    if (st.park && t > st.park.zone[0] - 20) out.push(3.0);
     // Room to pass a cyclist: half a lane out to the left.
     if (pc.kind === "road" && G.npcs.some(function (n) { return n.kind === "bike" && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
     return out;
@@ -609,7 +617,8 @@
     var dir = L.w > JH + 1.5 && Math.abs(L.u) < JH ? 0 : L.u > JH + 1.5 ? 1 : L.u < -JH - 1.5 ? -1 : null;
     if (dir === null) return;
     if (!armOk(pc, dir)) return crash("Du körde av vägen!");
-    if (dir !== pc.want) fault("route:" + pc.index, pc.want === 0 ? "Vi skulle köra rakt fram." : pc.want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster.", false);
+    signRules(pc, dir);
+    if (dir !== pc.want && !pc.st.free) fault("route:" + pc.index, pc.st.routeMsg || (pc.want === 0 ? "Vi skulle köra rakt fram." : pc.want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster."), false);
     if (dir !== 0 && pc.entryBlink !== dir) fault("blink:" + pc.index, "Du glömde blinka före svängen.", false);
     else if (dir !== 0 && pc.entryBlinkS > pc.s0 - 22) fault("blink:" + pc.index, "Blinka tidigare, i god tid före svängen.", false);
     if (dir !== 0 && pc.maxV * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
@@ -733,6 +742,7 @@
       pc.childOn = true;
       G.npcs.push(new Walker({ kind: "child", s: pc.s0 + st.child.s, u: 3.4, vu: -1.7, owner: pc, trigger: 0, color: "#f18f01" }));
     }
+    signRoad(pc, dt, t);
     if (st.finish && t > pc.len - 45 && t <= pc.len + 30) {
       if (p.v < 0.3 && G.finishT < 0) G.finishT = G.t;
       if (t > pc.len - 3) { p.v = 0; if (G.finishT < 0) G.finishT = G.t; }
@@ -774,6 +784,40 @@
     if (s - p.s < 80) return;
     var busy = G.npcs.some(function (o) { return o.mode === "path" && o.dir < 0 && Math.abs(o.s - s) < 30; });
     if (!busy) G.npcs.push(new PathCar({ s: s, d: -3.5, dir: -1, v: (pc.limit - 6) / KMH }));
+  }
+  function signRoad(pc, dt, t) {
+    var st = pc.st, p = G.p;
+    // Omkörningsförbud: passing a motor vehicle inside the zone.
+    if (st.noOvertake && t > st.noOvertake[0] && t < st.noOvertake[1]) {
+      G.npcs.forEach(function (n) {
+        if (n.mode !== "path" || n.dir < 0 || n.parked || n.kind === "bike") return;
+        if (G.prevS < n.s && p.s >= n.s) fault("overtake:" + pc.index, "Omkörningsförbud! Skylten förbjuder omkörning här.", true);
+      });
+    }
+    // Vägarbete: the right lane is shut; B6 says oncoming traffic goes first.
+    if (st.works) {
+      var w0 = pc.s0 + st.works.s, w1 = w0 + st.works.len;
+      if (crossedFront(w0) && G.npcs.some(function (n) { return n.mode === "path" && n.dir < 0 && n.s > w0 - 5 && n.s < w1 + 40; }))
+        fault("works:" + pc.index, "Väjningsplikt mot mötande! Vänta tills mötande har passerat vägarbetet.", true);
+      if (p.s + CAR.hl > w0 && p.s - CAR.hl < w1 && p.d > -1.15) return crash("Du körde in i vägarbetet!");
+    }
+    // Parking: stop at the edge where parking is allowed, not where stopping is forbidden.
+    if (st.park && !pc.parkDone && p.stillT > 1.2) {
+      if (t > st.park.noStop[0] && t < st.park.noStop[1]) fault("park:" + pc.index, "Här får du inte stanna. Skylten förbjuder att stanna och parkera.", true);
+      else if (t > st.park.zone[0] && t < st.park.zone[1]) {
+        if (p.d > 1.8) { pc.parkDone = true; praise("Snyggt parkerat! Här är parkering tillåten."); G.finishT = G.t + 1.5; }
+        else if (!pc.parkHint) { pc.parkHint = true; say("Kör in i parkeringsfickan till höger och stanna där."); }
+      }
+    }
+    if (st.park && !pc.parkDone && t > pc.len - 4) { pc.parkDone = true; fault("park:" + pc.index, "Vi missade parkeringen. Stanna där skylten P står.", false); G.finishT = G.t + 1; }
+    // People walking in a gångfartsområde.
+    if (st.street && !pc.streetOn && t > -120) {
+      pc.streetOn = true;
+      for (var i = 0; i < st.street; i++) {
+        var wk = new Walker({ kind: "stroll", s: pc.s0 + 20 + i * (pc.len - 40) / st.street, u: i % 2 ? -4.4 : 1.45, vs: (i % 3 ? 1 : -1) * 1.1 });
+        wk.lo = pc.s0 + 6; wk.hi = pc.s0 + pc.len - 6; G.npcs.push(wk);
+      }
+    }
   }
   // A car ahead that brakes hard at one spot, then drives on.
   function brakeFn(pc, a) {
@@ -857,7 +901,8 @@
       else dir = ok(want) ? want : ok(0) ? 0 : -dir;
     }
     if (dir !== 0 && p.blinkS > pc.s0 - 22 && !G.faultKeys["blink:" + pc.index]) fault("blink:" + pc.index, "Blinka tidigare, i god tid före svängen.", false);
-    if (dir !== want) fault("route:" + pc.index, want === 0 ? "Vi skulle köra rakt fram." : want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster.", false);
+    signRules(pc, dir);
+    if (dir !== want && !pc.st.free) fault("route:" + pc.index, pc.st.routeMsg || (want === 0 ? "Vi skulle köra rakt fram." : want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster."), false);
     if (dir !== 0 && p.v * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
     if (st.ctrl === "stopp" && !pc.stopped) fault("stop:" + pc.index, "Du stannade inte vid stopplinjen. Vid stopplikt ska bilen stå helt still.", true);
     pc.dir = dir;
@@ -883,6 +928,13 @@
           st.ctrl === "hoger" ? "Högerregeln! Bilen från höger hade företräde." : "Du lämnade inte företräde!", true);
       }
     });
+  }
+  // Turns the signs forbid: no entry into a side road, no left turn, a direction you must take.
+  function signRules(pc, dir) {
+    var st = pc.st, name = dir === 0 ? "fwd" : dir === 1 ? "right" : "left";
+    if ((st.noEntry || []).indexOf(name) >= 0) fault("sign:" + pc.index, "Infart förbjuden! Skylten vid gatan visar att du inte får köra in där.", true);
+    if (st.noLeft && dir === -1) fault("sign:" + pc.index, "Skylten förbjuder vänstersväng i korsningen!", true);
+    if (st.mustGo != null && dir !== st.mustGo) fault("sign:" + pc.index, "Skylten visar påbjuden körriktning. Där måste du köra dit pilen pekar.", true);
   }
   function sample(poly, step) { var out = []; for (var t = 0; t <= poly.len; t += step) out.push(poly.at(t)); return out; }
   function conflictT(poly, pts, fromT) {
@@ -990,6 +1042,7 @@
     var p = G.p;
     if (n.parked) { if (n.s < p.s - 80) n.gone = true; return; }
     var vt = n.vtAt ? n.vtAt(n.s) : n.vt;
+    if (n.dir < 0 && p.d < -2 && n.s > p.s && n.s - p.s < 30) vt = 0;
     if (n.dir > 0) {
       // Keep a distance to whatever is ahead in the same lane.
       var gap = Infinity, ov = 0;
@@ -1246,6 +1299,19 @@
       for (var z = -12; z < 12; z += 2) { ctx.beginPath(); ctx.moveTo(5.0, -bw - z); ctx.lineTo(4.4, -bw - z - 1); ctx.lineTo(5.0, -bw - z - 2); ctx.lineWidth = 0.15; ctx.strokeStyle = COL.yellow; ctx.stroke(); }
       ctx.fillStyle = COL.walk; ctx.fillRect(5.25, -bw - 14, 2.0, 28);
     }
+    if (st.works) {
+      var ws = st.works.s, wl = st.works.len;
+      ctx.fillStyle = "#7b6a55"; ctx.fillRect(-1.3, -ws - wl, 3.0, wl);
+      ctx.fillStyle = COL.orange;
+      for (var cw = ws; cw <= ws + wl; cw += 4) { ctx.beginPath(); ctx.arc(-1.45, -cw, 0.3, 0, Math.PI * 2); ctx.fill(); }
+      for (var k = 0; k < 6; k++) { ctx.fillStyle = k % 2 ? "#111" : COL.yellow; ctx.fillRect(-1.6 + k * 0.55, -ws + 0.2, 0.55, 0.4); }
+    }
+    if (st.park) {
+      ctx.fillStyle = COL.paint;
+      for (var pz = st.park.zone[0]; pz <= st.park.zone[1]; pz += 6) ctx.fillRect(1.75, -pz - 0.06, 2.5, 0.12);
+      ctx.fillStyle = COL.yellow;
+      dashes(1.9, st.park.noStop[0], st.park.noStop[1], 1, 1, 0.12, 0, COL.yellow);
+    }
     (st.bumps || []).forEach(function (bw) {
       ctx.fillStyle = "#62666c"; ctx.fillRect(-5.25, -bw - 2, 7, 4);
       ctx.fillStyle = COL.paint;
@@ -1414,7 +1480,7 @@
     var size = clamp(G.cam.sc * 2.6, 24, 40);
     G.course.signs.forEach(function (sg) {
       if (Math.abs(sg.s - G.p.s) > 260) return;
-      var pose = G.course.poseAt(sg.s), q = toG(pose, sg.u, 0), sp = w2s(q.x, q.y);
+      var pose = G.course.poseAt(sg.s), q = sg.pos || toG(pose, sg.u, 0), sp = w2s(q.x, q.y);
       if (sp.x < -50 || sp.x > W + 50 || sp.y < -60 || sp.y > H + 60) return;
       ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.arc(sp.x, sp.y, 3, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#666"; ctx.fillRect(sp.x - 1.5, sp.y - size * 0.75, 3, size * 0.75);
@@ -1787,6 +1853,40 @@
           say: [[10, "Cirkulationsplats. Vi ska rakt fram, andra avfarten. Sakta in i god tid."]] },
         { type: "round", want: 2, good: "Bra, mjukt och lugnt.", npcs: [{ from: "left", to: "right" }] },
         { type: "road", len: 150, finish: true, say: [[10, "Bra vinterkörning! Bromsa försiktigt och stanna här."]] }
+      ] },
+    { id: "skyltar", icon: "🪧", name: "Skyltar i stan", what: "Påbjuden körriktning, infart förbjuden, huvudled upphör, gångfart och parkering",
+      steps: [
+        { type: "road", env: "stad", limit: 50, len: 150, signs: [{ s: 8, speed: 50 }, { s: 120, code: "D1" }],
+          say: [[0, "Nu övar vi vägmärken. Titta efter skyltarna och följ dem."],
+                [70, "Vad visar den blå skylten med pilen? Följ den i korsningen."]] },
+        { type: "junction", ctrl: "hoger", want: -1, mustGo: -1, routeMsg: "Skylten visade att du måste svänga vänster.", good: "Rätt! Den blå runda skylten är ett påbud: du måste köra dit pilen visar.",
+          npcs: [{ from: "right", to: "straight", eta: 1.5 }] },
+        { type: "road", len: 160, signs: [{ s: 10, speed: 40 }],
+          say: [[10, "Nu ska vi till höger i korsningen. Men kolla vad som står vid gatan till höger."]] },
+        { type: "junction", ctrl: "hoger", want: 0, noEntry: ["right"], armSigns: [{ arm: "right", code: "C1" }],
+          routeMsg: "Vi fick inte köra in till höger, så rakt fram var rätt.", good: "Bra! Där var det infart förbjuden, så vi fortsatte rakt fram.",
+          npcs: [{ from: "left", to: "straight", prio: false }] },
+        { type: "road", len: 170, signs: [{ s: 10, code: "B4" }, { s: 120, code: "B5" }],
+          say: [[12, "Nu kör vi på huvudled."], [118, "Huvudleden upphör här. Vad gäller då i nästa korsning utan skyltar?"],
+                [150, "Efter korsningen börjar ett gångfartsområde, så sakta in."]] },
+        { type: "junction", ctrl: "hoger", want: 0, good: "Rätt, högerregeln! Huvudleden hade upphört.", npcs: [{ from: "right", to: "straight" }] },
+        { type: "road", len: 200, limit: 7, signs: [{ s: 6, code: "E9" }, { s: 192, code: "E10" }], street: 5,
+          say: [[4, "Gångfartsområde! Här kör du i gångfart, ungefär 7 km/h, och gående har företräde."]] },
+        { type: "road", len: 220, limit: 50, parking: true, signs: [{ s: 6, speed: 50 }, { s: 60, code: "C39" }, { s: 140, code: "E19" }],
+          park: { noStop: [60, 130], zone: [140, 205] },
+          say: [[10, "Nu ska du parkera till höger. Stanna inte där det är förbud, utan där skylten P står."]] }
+      ] },
+    { id: "vagarbete", icon: "🚧", name: "Vägarbete och omkörningsförbud", what: "Omkörningsförbud, vägarbete, väjningsplikt mot mötande och tillfälliga hastigheter",
+      steps: [
+        { type: "road", env: "land", limit: 80, len: 330, signs: [{ s: 6, speed: 80 }, { s: 30, code: "C27" }, { s: 230, code: "C28" }],
+          lanes: [0, -3.5], noOvertake: [30, 230], ahead: [{ s: 90, v: 30, kind: "tractor", ttl: 320 }], oncoming: [120],
+          say: [[8, "Omkörningsförbud börjar vid skylten med de två bilarna. Kör inte om traktorn förrän förbudet slutar."],
+                [232, "Nu är förbudet slut. Kör om om det är fritt, annars stannar vi bakom."]] },
+        { type: "road", len: 330, lanes: [0, -3.5], signs: [{ s: 10, code: "A20" }, { s: 40, speed: 50 }, { s: 96, code: "B6" }, { s: 100, code: "A5" }, { s: 250, code: "A21" }, { s: 256, speed: 70 }],
+          works: { s: 110, len: 60 }, oncoming: [30],
+          say: [[10, "Varning för vägarbete. Tillfälligt 50 km/h."],
+                [80, "Vägarbetet stänger vårt körfält. Skylten med den röda pilen betyder att vi har väjningsplikt mot mötande. Vänta, kör sedan förbi på vänster sida och tillbaka."]] },
+        { type: "road", len: 150, limit: 70, finish: true, say: [[10, "Bra kört genom vägarbetet! Stanna här vid kanten."]] }
       ] },
     { id: "fri", icon: "🎲", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
   ];
