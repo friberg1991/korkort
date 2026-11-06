@@ -152,8 +152,9 @@
     renderer.setRenderTarget(null);
     cockpit.visible = true; ownCar.visible = false;
   }
+  var gearR = false;
   function drawCluster(kmh, limit, blink, on, high) {
-    var key = kmh + "|" + limit + "|" + blink + "|" + on + "|" + high;
+    var key = kmh + "|" + limit + "|" + blink + "|" + on + "|" + high + "|" + gearR;
     if (key === clusterKey) return;
     clusterKey = key;
     var x = clusterCv.getContext("2d"), W = 512, H = 176;
@@ -167,7 +168,8 @@
     var na = Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160);
     x.strokeStyle = "#ff5a3c"; x.lineWidth = 4; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(na) * (R - 8), cy + Math.sin(na) * (R - 8)); x.stroke();
     // Speed in figures in the middle; red when over the limit.
-    x.fillStyle = kmh > limit + 3 ? "#ff8a80" : "#f2f4f5"; x.font = "800 64px system-ui, sans-serif"; x.fillText(String(kmh), 300, 92);
+    x.fillStyle = kmh > limit + 3 ? "#ff8a80" : "#f2f4f5"; x.font = "800 64px system-ui, sans-serif"; x.fillText(String(Math.abs(kmh)), 300, 92);
+    if (gearR) { x.fillStyle = "#ffc040"; x.font = "800 26px system-ui, sans-serif"; x.fillText("R", 214, 126); }
     x.fillStyle = "#8a9299"; x.font = "600 17px system-ui, sans-serif"; x.fillText("km/h", 300, 136);
     // The speed limit, as the car's sign reading shows it.
     x.fillStyle = "#fff"; x.beginPath(); x.arc(440, 92, 40, 0, 7); x.fill();
@@ -429,11 +431,23 @@
       g.add(mesh(box(0.45, 0.6, 0.8), mat(0x4a2e1a), 0, 2.0, -1.5));
       g.add(mesh(box(1.4, 0.1, 0.3), mat(0xc8b48a), 0, 2.4, -1.4));
       [[-0.3, -0.9], [0.3, -0.9], [-0.3, 0.9], [0.3, 0.9]].forEach(function (l) { g.add(mesh(box(0.15, 1.1, 0.15), mat(0x3a2414), l[0], 0.55, l[1])); });
-    } else if (n.kind === "train") {
-      for (var k = 0; k < 4; k++) {
-        g.add(mesh(box(3.2, 3.6, 12.8), mat(k === 0 ? 0xc0392b : 0x8e959e), 0, 2.0, k * 13.5));
-        g.add(mesh(box(3.25, 0.6, 11), mat(0x30363e), 0, 2.6, k * 13.5));
+    } else if (n.kind === "train" || n.kind === "tram") {
+      var tram = n.kind === "tram";
+      for (var k = 0; k < (n.cars || 4); k++) {
+        g.add(mesh(box(tram ? 2.6 : 3.2, tram ? 3.2 : 3.6, 12.8), mat(tram ? 0x2a62b8 : k === 0 ? 0xc0392b : 0x8e959e), 0, tram ? 1.8 : 2.0, k * 13.5));
+        g.add(mesh(box(tram ? 2.65 : 3.25, 0.8, 11), mat(0x30363e), 0, tram ? 2.4 : 2.6, k * 13.5));
+        if (tram) g.add(mesh(box(2.65, 0.25, 12.8), mat(0xf2f4f6), 0, 0.9, k * 13.5));
       }
+      if (tram) g.add(mesh(box(0.08, 1.4, 0.08), mat(0x30363e), 0, 4.0, 0));
+    } else if (n.kind === "cone") {
+      g.add(mesh(cyl(0.03, 0.26, 0.75, 8), mat(0xff7a1a), 0, 0.38, 0));
+      g.add(mesh(cyl(0.12, 0.17, 0.12, 8), mat(0xffffff), 0, 0.4, 0));
+    } else if (n.kind === "cyclist") {
+      [-0.55, 0.55].forEach(function (z) { var wh = mesh(cyl(0.34, 0.34, 0.05, 12), mat(0x1c1c1c), 0, 0.34, z); wh.rotation.z = Math.PI / 2; g.add(wh); });
+      g.add(mesh(box(0.05, 0.05, 1.0), mat(0x8a8e94), 0, 0.6, 0));
+      g.add(mesh(box(0.34, 0.6, 0.24), mat(col), 0, 1.25, 0.1));
+      g.add(mesh(box(0.2, 0.5, 0.2), mat(0x333840), 0, 0.75, 0.15));
+      g.add(mesh(new T.IcosahedronGeometry(0.13, 0), mat(0xf0c419), 0, 1.7, 0.05));
     } else {
       var L = n.hl * 2, Wd = n.hw * 2;
       var wheels = function (zs, r) {
@@ -582,21 +596,23 @@
   }
   var shadowMat = null;
 
-  var snowy = false, flakes = null, night = false, hemi, sun, beam;
+  var snowy = false, flakes = null, night = false, rainy = false, hemi, sun, beam, baseFog = [55, 135];
   function setWeather(w) {
-    snowy = w === "snow"; night = w === "night";
-    var sky = night ? 0x0b1222 : snowy ? 0xd9dee2 : 0xc4dbec;
+    snowy = w === "snow" || w === "ice"; night = w === "night"; rainy = w === "rain";
+    var sky = night ? 0x0b1222 : rainy ? 0x9aa5ae : snowy ? 0xd9dee2 : 0xc4dbec;
     hemi.intensity = night ? 0.12 : 1.0; sun.intensity = night ? 0.03 : 0.85;
     scene.background.setHex(sky); scene.fog.color.setHex(sky);
-    scene.fog.near = night ? 20 : snowy ? 25 : 55; scene.fog.far = night ? 110 : snowy ? 95 : 135;
+    scene.fog.near = night ? 20 : rainy ? 22 : snowy ? 25 : 55; scene.fog.far = night ? 110 : rainy ? 90 : snowy ? 95 : 135;
+    baseFog = [scene.fog.near, scene.fog.far];
     grass.material = mat(snowy ? 0xe6ebee : 0x709c54);
     paintSky(snowy, night);
+    if (rainy) { clouds.visible = false; forest.children[0].material.color.setHex(0x7f8a86); }
     if (flakes) { scene.remove(flakes); flakes = null; }
-    if (snowy) {
-      var n = 1600, pos = new Float32Array(n * 3);
+    if (snowy && w !== "ice" || rainy) {
+      var n = rainy ? 2400 : 1600, pos = new Float32Array(n * 3);
       for (var i = 0; i < n; i++) { pos[i * 3] = (Math.random() - 0.5) * 60; pos[i * 3 + 1] = Math.random() * 14; pos[i * 3 + 2] = (Math.random() - 0.5) * 60; }
       var geo = new T.BufferGeometry(); geo.setAttribute("position", new T.BufferAttribute(pos, 3));
-      flakes = new T.Points(geo, new T.PointsMaterial({ color: 0xffffff, size: 0.09 }));
+      flakes = new T.Points(geo, new T.PointsMaterial({ color: rainy ? 0xc8d4de : 0xffffff, size: rainy ? 0.05 : 0.09, transparent: rainy, opacity: rainy ? 0.7 : 1 }));
       scene.add(flakes);
     }
   }
@@ -605,7 +621,7 @@
     if (!flakes) return;
     var a = flakes.geometry.attributes.position, arr = a.array;
     for (var i = 0; i < arr.length; i += 3) {
-      arr[i + 1] -= dt * 1.4;
+      arr[i + 1] -= dt * (rainy ? 9 : 1.4);
       arr[i] += Math.sin((arr[i + 1] + i) * 0.7) * dt * 0.3;
       if (arr[i + 1] < 0) arr[i + 1] += 14;
     }
@@ -664,6 +680,8 @@
     });
     camera.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22 + bump, p.y - ry * 0.36 - fy * 0.2);
     updateSnow(p, dt);
+    var foggy = G.course.pieceAt(p.s).st.fog, fn = foggy ? 6 : baseFog[0], ff = foggy ? 38 : baseFog[1];
+    scene.fog.near += (fn - scene.fog.near) * Math.min(1, dt * 0.8); scene.fog.far += (ff - scene.fog.far) * Math.min(1, dt * 0.8);
     camera.rotation.set(-0.04, -camA, 0);
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
@@ -673,6 +691,7 @@
     wheel.rotation.z = wheelA;
     stalk.rotation.z = -p.blink * 0.25;
     var pc = G.course.pieceAt(p.s);
+    gearR = p.gear === "R";
     beam.intensity = night ? (p.high ? 900 : 380) : 0; beam.distance = p.high ? 130 : 60; beam.angle = p.high ? 0.42 : 0.5;
     beam.target.position.y = p.high ? -0.9 : -1.6;
     drawCluster(Math.round(p.v * 3.6), G.limit || pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0, night && p.high);

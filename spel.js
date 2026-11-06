@@ -144,7 +144,7 @@
     pc.solid = st.solid || [];
     pc.isSolid = function (t) { for (var i = 0; i < pc.solid.length; i++) if (t >= pc.solid[i][0] && t <= pc.solid[i][1]) return true; return pc.center === "solid"; };
     pc.decor = makeDecor(pc);
-    if (st.zebra) course.feats.push({ kind: "zebra", s: pc.s0 + st.zebra.s, pc: pc, peds: st.zebra.peds || [], started: false });
+    if (st.zebra) course.feats.push({ kind: "zebra", s: pc.s0 + st.zebra.s, pc: pc, peds: st.zebra.peds || [], started: false, bike: !!st.zebra.bike });
     if (st.rail) course.feats.push({ kind: "rail", s: pc.s0 + st.rail.s, pc: pc, state: "open", t: 0 });
     if (st.bus) course.feats.push({ kind: "bus", s: pc.s0 + st.bus.s, pc: pc });
     (st.bumps || []).forEach(function (b) { course.feats.push({ kind: "bump", s: pc.s0 + b, pc: pc }); });
@@ -245,7 +245,7 @@
     this.id = nextId++; this.mode = "path"; this.kind = o.kind || "car"; this.s = o.s; this.d = o.d || 0; this.td = this.d;
     this.dir = o.dir || 1; this.v = o.v != null ? o.v : 0; this.vt = o.vt != null ? o.vt : this.v; this.color = o.color || pickColor();
     this.vtAt = o.vtAt || null; this.blink = 0; this.siren = this.kind === "amb"; this.parked = !!o.parked; this.ttl = o.ttl || 0;
-    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35], police: [2.3, 0.92] }[this.kind];
+    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35], police: [2.3, 0.92], cone: [0.25, 0.25] }[this.kind];
     this.yaw = o.yaw || 0; if (o.blink) this.blink = o.blink;
     this.hl = dims[0]; this.hw = dims[1];
   }
@@ -280,7 +280,7 @@
   var G_NIGHT = false;
   var BASE_COL = { grass: COL.grass, grassDark: COL.grassDark, walk: COL.walk, tree: COL.tree, treeLight: COL.treeLight, asph: COL.asph };
   function setWeather(w) {
-    var snow = w === "snow";
+    var snow = w === "snow" || w === "ice";
     G_NIGHT = w === "night";
     COL.grass = snow ? "#e6ebee" : BASE_COL.grass; COL.grassDark = snow ? "#d5dce0" : BASE_COL.grassDark;
     COL.walk = snow ? "#dfe3e6" : BASE_COL.walk; COL.treeLight = snow ? "#f2f5f7" : BASE_COL.treeLight;
@@ -295,8 +295,8 @@
            blink: 0, blinkS: -1e9, laneT: 0, a: 0, x: 0, y: 0, stillT: 0, overT: 0, leftT: 0, closeT: 0, hl: CAR.hl, hw: CAR.hw },
       cam: { x: 0, y: 0, a: 0, sc: 12 }, crashed: false, finishT: -1, factShown: {}, factNext: null, factT: 0, lastFact: -99
     };
-    G.grip = L.weather === "snow" ? 0.45 : 1;
-    G.manual = store.steer !== "auto";
+    G.grip = L.grip || (L.weather === "snow" ? 0.45 : L.weather === "rain" ? 0.7 : 1);
+    G.manual = !!L.manual || store.steer !== "auto";
     document.getElementById("pad").classList.toggle("auto", !G.manual);
     G.p.steer = 0;
     G.course = new Course(L.make ? L.make() : L.steps, G);
@@ -311,7 +311,8 @@
     document.querySelector("#say .who").textContent = L.exam ? "INSPEKTÖREN" : "LÄRAREN";
     document.querySelector("#say .face").textContent = L.exam ? "📋" : "🧑‍🏫";
     document.getElementById("hb").hidden = L.weather !== "night";
-    G.rec = []; G.recT = 0; G.p.high = false;
+    G.rec = []; G.recT = 0; G.p.high = false; G.p.gear = "D"; G.aquaT = 0;
+    document.getElementById("rv").hidden = !L.reverse;
     show("game");
     ensureAudio();
     lastFrame = performance.now();
@@ -403,7 +404,7 @@
   }
   function updateFacts(dt) {
     if (G.factT > 0) { G.factT -= dt; if (G.factT <= 0) hideFact(); }
-    if (store.facts === false || G.lesson.exam) return;
+    if (store.facts === false || G.lesson.exam || G.lesson.manual) return;
     var p = G.p, c = G.course;
     // What fits right now: a sign just ahead, then the situation, then something general.
     c.signs.forEach(function (sg) { if (sg.code && FACTS[sg.code] && sg.s - p.s < 45 && sg.s - p.s > 0) wantFact(FACTS[sg.code]); });
@@ -460,6 +461,9 @@
     merge: "På accelerationsfältet ska du få upp farten så att du kan glida in i en lucka i samma fart som trafiken.",
     accel: "Kör in på motorvägen innan accelerationsfältet tar slut. Gasa och leta lucka i god tid.",
     exit: "Byt till högra körfältet i god tid före avfarten och blinka in i avfartens körfält.",
+    bikex: "Vid en cykelöverfart, den blå skylten med en cykel, ska du ge cyklister som är på väg ut på eller redan är på överfarten tillfälle att passera.",
+    tram: "Spårvagnen har nästan alltid företräde. Släpp fram den innan du kör över spåret.",
+    aqua: "Kör saktare när det står vatten på vägen. Vid vattenplaning: släpp gasen, håll ratten rakt och bromsa inte hårt.",
     rail: "När ljusen blinkar eller bommarna rör sig ska du stanna. Ett tåg kan inte väja eller stanna snabbt.",
     amb: "Ge fri väg åt utryckningsfordon: blinka, kör åt sidan och sakta in.",
     bus: "Där högsta tillåtna hastighet är 50 km/h eller lägre ska du släppa ut en buss som blinkar för att lämna hållplatsen.",
@@ -497,6 +501,7 @@
     else if (k === "ArrowLeft" || k === "a" || k === "A") { if (G.manual) keys.left = true; else if (!e.repeat) setBlink(-1); }
     else if (k === "ArrowRight" || k === "d" || k === "D") { if (G.manual) keys.right = true; else if (!e.repeat) setBlink(1); }
     else if ((k === "h" || k === "H") && !e.repeat) toggleHigh();
+    else if ((k === "r" || k === "R") && !e.repeat) toggleGear();
     else if ((k === "q" || k === "Q") && !e.repeat) setBlink(-1);
     else if ((k === "e" || k === "E") && !e.repeat) setBlink(1);
     else if (k === "Escape" || k === "p" || k === "P") pause();
@@ -526,6 +531,12 @@
     var up = function (e) { e.preventDefault(); keys[b[1]] = false; el.classList.remove("down"); };
     el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); el.addEventListener("pointerleave", up);
   });
+  function toggleGear() {
+    if (!G || !G.manual || Math.abs(G.p.v) > 0.5) return;
+    G.p.gear = G.p.gear === "R" ? "D" : "R"; tick(0.8);
+    say(G.p.gear === "R" ? "Backen i. Gasa försiktigt, titta i speglarna." : "Framåt igen.");
+  }
+  document.getElementById("rv").addEventListener("pointerdown", function (e) { e.preventDefault(); toggleGear(); });
   function toggleHigh() { if (!G || G.lesson.weather !== "night") return; G.p.high = !G.p.high; tick(0.6); }
   document.getElementById("hb").addEventListener("pointerdown", function (e) { e.preventDefault(); toggleHigh(); });
   document.getElementById("kl").addEventListener("pointerdown", function (e) { e.preventDefault(); setBlink(-1); });
@@ -569,6 +580,7 @@
     if (G.ambActive && pc.kind === "road") out.push(1.3);
     if (st.works && t > st.works.s - 60 && t < st.works.s + st.works.len + 10) out.push(-3.5);
     if (st.accident && t > st.accident.s - 60 && t < st.accident.s + st.accident.len + 10) out.push(-3.5);
+    if (st.popup && t > st.popup.s - 40 && t < st.popup.s + 20) out.push(-3.5);
     if (st.park && t > st.park.zone[0] - 20) out.push(3.0);
     // Room to pass a cyclist: half a lane out to the left.
     if (pc.kind === "road" && G.npcs.some(function (n) { return n.kind === "bike" && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
@@ -580,13 +592,21 @@
     G.t += dt;
     // Pedals.
     var a;
-    if (keys.brake) a = -7.5 * G.grip;
-    else if (keys.gas) a = (3.4 * (1 - p.v / 48) + 0.3) * (0.55 + 0.45 * G.grip);
-    else a = -0.3 - p.v * 0.006;
-    p.v = Math.max(0, p.v + a * dt);
+    if (p.gear === "R") {
+      // Reverse: gas backs slowly, at most about 6 km/h.
+      if (keys.gas) p.v = Math.max(-1.7, p.v - 1.6 * dt);
+      else if (keys.brake) p.v = Math.min(0, p.v + 7.5 * G.grip * dt);
+      else p.v = Math.min(0, p.v + 0.8 * dt);
+      G.revT = (G.revT || 0) + dt; if (p.v < -0.2 && G.revT > 0.6) { G.revT = 0; beep(1200, 0.06, 0.03); }
+    } else {
+      if (keys.brake) a = -7.5 * G.grip;
+      else if (keys.gas) a = (3.4 * (1 - p.v / 48) + 0.3) * (0.55 + 0.45 * G.grip);
+      else a = -0.3 - p.v * 0.006;
+      p.v = Math.max(0, p.v + a * dt);
+    }
     if (G.manual) moveManual(dt);
     else moveOnPath(dt);
-    p.stillT = p.v < 0.3 ? p.stillT + dt : 0;
+    p.stillT = Math.abs(p.v) < 0.3 ? p.stillT + dt : 0;
 
     // Pieces near the car: spawning, signals and rule checks.
     course.pieces.forEach(function (pc) {
@@ -733,7 +753,8 @@
     var rate = want === 0 ? 2.4 : 1.5;
     p.steer += clamp(want - p.steer, -rate * dt, rate * dt);
     p.steer = clamp(p.steer, -maxS - 0.04, maxS + 0.04);
-    p.a += p.v * Math.tan(p.steer) / 2.6 * dt;
+    var bite = (0.35 + 0.65 * G.grip) * (G.aquaT > 0 ? 0.1 : 1);
+    p.a += p.v * Math.tan(p.steer) / 2.6 * dt * bite;
     p.x += Math.sin(p.a) * p.v * dt; p.y -= Math.cos(p.a) * p.v * dt;
     G.prevS = p.s;
     var pend = course.pending;
@@ -1007,6 +1028,7 @@
   }
   function events(pc, dt, t) {
     var st = pc.st, p = G.p, f = front();
+    moreEvents(pc, dt, t);
     if (!pc.evOn && t > -200) {
       pc.evOn = true;
       if (st.police) {
@@ -1072,6 +1094,63 @@
     if (st.jaywalk && !pc.jayOn && t >= st.jaywalk.s - 26) {
       pc.jayOn = true;
       G.npcs.push(new Walker({ kind: "ped", s: pc.s0 + st.jaywalk.s, u: 4.0, vu: -1.4, color: "#6a4c93" }));
+    }
+  }
+  function moreEvents(pc, dt, t) {
+    var st = pc.st, p = G.p;
+    // Fickparkering: backed into the gap, straight, close to the kerb, standing still.
+    if (st.pocket && !pc.pocketDone) {
+      var a0 = pc.s0 + st.pocket[0] + 3.2, a1 = pc.s0 + st.pocket[1] - 3.2, pose = G.course.poseAt(p.s);
+      var straight = Math.abs(angDiff(p.a, pose.a)) < 0.2;
+      if (p.s > a0 && p.s < a1 && p.d > 2.3 && p.d < 3.7 && straight && p.stillT > 1) {
+        pc.pocketDone = true; praise("Snyggt fickparkerat!"); G.finishT = G.t + 1.5;
+      } else if (p.s > a0 && p.s < a1 && p.d > 2.3 && p.stillT > 1.5 && !straight && !pc.pocketHint) { pc.pocketHint = true; say("Nästan! Räta upp bilen så den står parallellt med kanten."); }
+      if (t > pc.len - 6 && !pc.pocketDone) { pc.pocketDone = true; fault("park:" + pc.index, "Vi hann inte fickparkera. Prova igen, stanna bredvid bilen framför luckan och backa in.", false); G.finishT = G.t + 1; }
+    }
+    // Halkbana: cones pop up in our lane.
+    if (st.popup && !pc.popOn && t > st.popup.s - 32) {
+      pc.popOn = true;
+      for (var u = -1.4; u <= 1.6; u += 0.75) G.npcs.push(new PathCar({ s: pc.s0 + st.popup.s, d: u, v: 0, kind: "cone", parked: true }));
+      say("Hinder! Bromsa och styr runt!", "", true);
+      pc.popV = p.v * KMH;
+    }
+    if (st.popup && pc.popOn && !pc.popDone && p.s > pc.s0 + st.popup.s + 3) {
+      pc.popDone = true; praise("Bra undanmanöver! I " + Math.round(pc.popV) + " km/h på halt underlag krävs det mycket plats.");
+    }
+    // Brake test: how far the car slides compared with a dry road.
+    if (st.brakeTest) {
+      var bt = pc.bt || (pc.bt = {});
+      if (!bt.said && t > st.brakeTest.s - 2) { bt.said = true; say("Bromsa så hårt du kan nu!", "", true); }
+      if (bt.said && !bt.s0 && keys.brake && p.v > 3) { bt.s0 = p.s; bt.v0 = p.v; }
+      if (bt.s0 && !bt.done && p.v < 0.2) {
+        bt.done = true;
+        var real = p.s - bt.s0, dry = bt.v0 * bt.v0 / (2 * 7.5);
+        say("Bromssträckan blev " + Math.round(real) + " meter från " + Math.round(bt.v0 * KMH) + " km/h. På torr asfalt hade den varit ungefär " + Math.round(dry) + " meter.", "good");
+      }
+    }
+    // Puddles: too fast and the tyres float on the water.
+    (st.puddles || []).forEach(function (ps, i) {
+      if (crossedFront(pc.s0 + ps) && p.d > -1.5) {
+        if (p.v * KMH > 70) { G.aquaT = 1.0; fault("aqua:" + pc.index + ":" + i, "Vattenplaning! Släpp gasen, håll ratten rakt och bromsa inte hårt.", false); }
+      }
+    });
+    if (G.aquaT > 0) G.aquaT -= dt;
+    // Tram crossing: the tram is timed to come as we do.
+    if (st.tram) {
+      var ts = pc.s0 + st.tram.s, T = pc.tram;
+      if (!T && ts - p.s < 85 && ts - p.s > 20) {
+        var pose2 = G.course.poseAt(ts), eta = Math.max(2, (ts - p.s) / Math.max(p.v, 6)), v = 11;
+        var lead = Math.min(140, v * eta + 4);
+        pc.tram = T = { mode: "train", id: nextId++, kind: "tram", cars: 2, hl: 13, hw: 1.3, owner: pc, gone: false,
+          poly: new Poly([toG(pose2, -lead - 2, 0), toG(pose2, 200, 0)]), t: 0, v: v };
+        T.crossT = lead + 2;
+        G.npcs.push(T);
+      }
+      if (T && crossedFront(ts - 2.5)) {
+        var togo = T.crossT - T.t;
+        if (togo > -30 && togo < T.v * 2.5 + 6) fault("tram:" + pc.index, "Spårvagnen har företräde! Släpp fram den innan du kör över spåret.", true);
+        else if (!pc.tramOk) { pc.tramOk = true; praise("Bra, du släppte fram spårvagnen."); }
+      }
     }
   }
   // A car ahead that brakes hard at one spot, then drives on.
@@ -1255,15 +1334,16 @@
         for (var e = 0; e < extra; e++) list.push({ side: e % 2 ? "right" : "left" });
         list.forEach(function (pd, i) {
           var fromRight = pd.side !== "left";
-          G.npcs.push(new Walker({ s: f.s + (i % 2 ? 0.6 : -0.6), u: fromRight ? 4.2 + i * 1.2 : -8.7 - i * 1.2, vu: fromRight ? -1.35 : 1.35, owner: f }));
+          var sp = f.bike ? 4.4 : 1.35;
+          G.npcs.push(new Walker({ kind: f.bike ? "cyclist" : "ped", s: f.s + (i % 2 ? 0.6 : -0.6), u: fromRight ? (f.bike ? 7 : 4.2) + i * 1.2 : (f.bike ? -11 : -8.7) - i * 1.2, vu: fromRight ? -sp : sp, owner: f }));
         });
       }
       if (crossedFront(f.s - 1.6)) {
         var onIt = G.npcs.some(function (n) { return n.owner === f && n.u > -6.1 && n.u < 2.6 && !n.done; });
-        if (onIt) fault("ped:" + f.s, "Stanna! Gående på övergångsstället har företräde.", true);
+        if (onIt) fault(f.bike ? "bikex:" + f.s : "ped:" + f.s, f.bike ? "Cyklisten på cykelöverfarten skulle få passera först!" : "Stanna! Gående på övergångsstället har företräde.", true);
         else if (f.peds.length && !G.faultKeys["ped:" + f.s]) { f.ok = true; }
       }
-      if (f.ok && !f.praised && p.s > f.s + 5) { f.praised = true; praise("Bra, du lät den gående gå över."); }
+      if (f.ok && !f.praised && p.s > f.s + 5) { f.praised = true; praise(f.bike ? "Bra, du släppte fram cyklisten." : "Bra, du lät den gående gå över."); }
     } else if (f.kind === "rail") {
       f.t += dt;
       if (f.state === "open" && f.s - p.s < 150 && f.s - p.s > 0 && !f.used) {
@@ -1376,6 +1456,7 @@
       }
     }
     if (n.u < -14 || n.u > 18) n.gone = true;
+    if (n.kind === "cyclist" && (n.vu < 0 ? n.u < -10 : n.u > 6)) { n.done = true; n.gone = true; }
     if (n.kind === "ped" && n.vu && (n.vu < 0 ? n.u < -8.2 : n.u > 3.8)) { n.done = true; n.gone = true; }
     if (n.kind === "officer" && n.u > 4.6) n.vu = 0;
     if (n.s < p.s - 120) n.gone = true;
@@ -1402,14 +1483,14 @@
       if (n.mode === "train") {
         var tp = n.poly.at(n.t);
         var box = { x: tp.x, y: tp.y, a: tp.a, hl: 6, hw: 1.6 };
-        for (var k = 0; k < 4; k++) {
+        for (var k = 0; k < (n.cars || 4); k++) {
           box.x = tp.x - Math.sin(tp.a) * k * 13.5; box.y = tp.y + Math.cos(tp.a) * k * 13.5;
-          if (overlap(me, box)) return crash("Du krockade med tåget!");
+          if (overlap(me, box)) return crash(n.kind === "tram" ? "Du krockade med spårvagnen!" : "Du krockade med tåget!");
         }
         continue;
       }
       if (overlap(me, boxOf(n, npcPose(n)))) {
-        var what = { ped: "en gående", stroll: "en gående", officer: "polisen", police: "polisbilen", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
+        var what = { ped: "en gående", stroll: "en gående", cyclist: "en cyklist", cone: "hindret", officer: "polisen", police: "polisbilen", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
@@ -1541,11 +1622,25 @@
       }
     }
     if (land) { dashes(1.6, 0, L, 1, 2, 0.1, ph); dashes(-5.1, 0, L, 1, 2, 0.1, ph); }
-    if (st.zebra) {
+    if (st.zebra && st.zebra.bike) {
+      // Cykelöverfart: a row of squares on each side of the crossing, the bike path in red.
+      var cw = st.zebra.s;
+      ctx.fillStyle = "#b45a4c"; ctx.fillRect(-5.25, -cw - 1.3, 7, 2.6);
+      ctx.fillStyle = COL.paint;
+      for (var cu = -5.1; cu < 1.6; cu += 1.0) { ctx.fillRect(cu, -cw - 1.75, 0.45, 0.45); ctx.fillRect(cu, -cw + 1.3, 0.45, 0.45); }
+    } else if (st.zebra) {
       var zw = st.zebra.s;
       ctx.fillStyle = COL.paint;
       for (var u = -5.0; u < 1.6; u += 1.0) ctx.fillRect(u, -zw - 1.5, 0.5, 3);
     }
+    if (st.tram) {
+      var tw = st.tram.s;
+      ctx.fillStyle = "#62666c"; ctx.fillRect(-60, -tw - 1.4, 120, 2.8);
+      ctx.fillStyle = "#2e3034"; ctx.fillRect(-60, -tw - 0.8, 120, 0.14); ctx.fillRect(-60, -tw + 0.66, 120, 0.14);
+    }
+    (st.puddles || []).forEach(function (pw) {
+      ctx.fillStyle = "rgba(40,70,110,0.55)"; ctx.beginPath(); ctx.ellipse(0, -pw, 1.6, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+    });
     if (st.bus) {
       var bw = st.bus.s;
       ctx.fillStyle = COL.asph; ctx.fillRect(1.75, -bw - 14, 3.5, 28);
@@ -1660,6 +1755,7 @@
     ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
     var hl = n.hl, hw = n.hw, kind = n.kind;
     ctx.fillStyle = "rgba(0,0,0,0.25)"; rr(-hw + 0.15, -hl + 0.25, hw * 2, hl * 2, 0.5); ctx.fill();
+    if (kind === "cone") { disc("#ff7a1a", 0, 0, 0.28); disc("#ffffff", 0, 0, 0.12); ctx.restore(); return; }
     if (kind === "bike") {
       ctx.fillStyle = "#222"; ctx.fillRect(-0.05, -hl, 0.1, hl * 2);
       ctx.fillStyle = n.color; ctx.beginPath(); ctx.ellipse(0, 0.1, 0.32, 0.22, 0, 0, Math.PI * 2); ctx.fill();
@@ -1712,6 +1808,10 @@
       ctx.fillStyle = "#5b3a22"; ctx.beginPath(); ctx.ellipse(0, 0.2, 0.55, 1.3, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#4a2e1a"; ctx.beginPath(); ctx.ellipse(0, -1.45, 0.3, 0.5, 0, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = "#c8b48a"; ctx.lineWidth = 0.18; ctx.beginPath(); ctx.moveTo(-0.9, -1.4); ctx.lineTo(0.9, -1.4); ctx.stroke();
+    } else if (n.kind === "cyclist") {
+      ctx.fillStyle = "#222"; ctx.fillRect(-0.05, -0.9, 0.1, 1.8);
+      ctx.fillStyle = n.color; ctx.beginPath(); ctx.ellipse(0, 0.1, 0.32, 0.22, 0, 0, Math.PI * 2); ctx.fill();
+      disc("#f0c419", 0, 0.05, 0.15);
     } else if (n.kind === "officer") {
       ctx.fillStyle = "#1d2a4a"; ctx.beginPath(); ctx.ellipse(0, 0, 0.34, 0.22, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#d8f02c"; ctx.fillRect(-0.3, -0.08, 0.6, 0.16);
@@ -1727,12 +1827,12 @@
     ctx.restore();
   }
   function drawTrain(n) {
-    var tp = n.poly.at(n.t);
-    for (var k = 0; k < 4; k++) {
+    var tp = n.poly.at(n.t), tram = n.kind === "tram";
+    for (var k = 0; k < (n.cars || 4); k++) {
       var x = tp.x - Math.sin(tp.a) * k * 13.5, y = tp.y + Math.cos(tp.a) * k * 13.5;
       ctx.save(); ctx.translate(x, y); ctx.rotate(tp.a);
       ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(-1.45, -6.2, 3.2, 12.6);
-      ctx.fillStyle = k === 0 ? "#c0392b" : "#8e959e"; rr(-1.6, -6.4, 3.2, 12.8, 0.6); ctx.fill();
+      ctx.fillStyle = tram ? "#2a62b8" : k === 0 ? "#c0392b" : "#8e959e"; rr(-1.6, -6.4, 3.2, 12.8, 0.6); ctx.fill();
       ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.fillRect(-1.2, -5.6, 2.4, 11.2);
       if (k === 0) { ctx.fillStyle = COL.glass; ctx.fillRect(-1.3, -6.1, 2.6, 0.9); }
       ctx.restore();
@@ -1829,9 +1929,18 @@
     drawVehicle({ kind: "car", hl: CAR.hl, hw: CAR.hw, color: COL.red, blink: G.p.blink }, { x: G.p.x, y: G.p.y, a: G.p.a });
     ctx.restore();
     if (G_NIGHT) drawNight();
+    if (G.lesson.weather === "rain") drawRain();
     drawSigns();
     drawLights();
     drawHud(pc);
+  }
+  function drawRain() {
+    var fog = curPiece().st.fog;
+    ctx.fillStyle = fog ? "rgba(225,230,235,0.45)" : "rgba(70,90,110,0.18)"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(220,230,240,0.35)"; ctx.lineWidth = 1;
+    var r = rng(Math.floor(G.t * 20)); ctx.beginPath();
+    for (var i = 0; i < 90; i++) { var x = r() * W, y = r() * H; ctx.moveTo(x, y); ctx.lineTo(x - 3, y + 12); }
+    ctx.stroke();
   }
   function drawNight() {
     var p = G.p, sp = w2s(p.x, p.y), ang = p.a - G.cam.a, reach = (p.high ? 70 : 38) * G.cam.sc;
@@ -1875,7 +1984,7 @@
   }
   function drawHud(pc) {
     pc = pc || curPiece();
-    var kmh = Math.round(G.p.v * KMH);
+    var kmh = Math.round(Math.abs(G.p.v) * KMH);
     hud.speed.textContent = kmh;
     var lim = G.limit || pc.limit;
     hud.speed.className = kmh > lim + 3 ? "over" : "";
@@ -1938,6 +2047,15 @@
     if (ok || !prev) store.best[G.lesson.id] = ok ? "ok" : "no";
     // Stars: 3 without a single fault, 2 passed, 1 finished, 0 after a crash.
     var stars = G.crashed ? 0 : !ok ? 1 : G.faults.length ? 2 : 3;
+    // Daily drive: a run of days in a row.
+    if (G.lesson.daily && !G.crashed) {
+      var dy = store.daily || {}, today = dayKey(0), yest = dayKey(-1);
+      if (dy.last !== today) { dy.streak = dy.last === yest ? (dy.streak || 0) + 1 : 1; dy.last = today; }
+      store.daily = dy;
+    }
+    // Weak points: which faults come back most often.
+    store.faultCounts = store.faultCounts || {};
+    G.faults.forEach(function (f) { if (f.kind && f.kind !== "crash") store.faultCounts[f.kind] = (store.faultCounts[f.kind] || 0) + 1; });
     store.stars = store.stars || {}; store.runs = (store.runs || 0) + 1;
     if (stars > (store.stars[G.lesson.id] || 0)) store.stars[G.lesson.id] = stars;
     var had = (store.badges || []).slice();
@@ -1968,6 +2086,8 @@
     document.getElementById("next").hidden = !(ok && G.idx < LESSONS.length - 1);
     setTimeout(function () { show("result"); }, 300);
   }
+  function dayKey(off) { var dt = new Date(Date.now() + off * 864e5); return dt.getFullYear() + "-" + (dt.getMonth() + 1) + "-" + dt.getDate(); }
+  function dayNumber() { var dt = new Date(); return dt.getFullYear() * 400 + dt.getMonth() * 32 + dt.getDate(); }
   function stars(id) { return (store.stars || {})[id] || (store.best[id] === "ok" ? 2 : 0); }
   var BADGES = [
     { id: "first", icon: "🥉", name: "Första godkända", test: function () { return LESSONS.some(function (L) { return stars(L.id) >= 2; }); } },
@@ -1980,7 +2100,8 @@
     { id: "police", icon: "👮", name: "Lugn i alla lägen", test: function () { return stars("polis") >= 2; } },
     { id: "ten", icon: "🔟", name: "Tio körningar", test: function () { return (store.runs || 0) >= 10; } },
     { id: "exam", icon: "🎓", name: "Körkortsklar", test: function () { return stars("prov") >= 2; } },
-    { id: "all", icon: "🏆", name: "Alla lektioner godkända", test: function () { return LESSONS.every(function (L) { return L.id === "fri" || stars(L.id) >= 2; }); } }
+    { id: "streak", icon: "🔥", name: "Tre dagar i rad", test: function () { return ((store.daily || {}).streak || 0) >= 3; } },
+    { id: "all", icon: "🏆", name: "Alla lektioner godkända", test: function () { return LESSONS.every(function (L) { return L.id === "fri" || L.daily || stars(L.id) >= 2; }); } }
   ];
   // Questions from the theory part on the rule behind each fault (picture questions left out).
   var QTOPIC = {
@@ -1997,10 +2118,12 @@
     var hits = Q.filter(function (q) { return !q[4] && used.indexOf(q[1]) < 0 && rx.some(function (r) { return r.test(q[1].toLowerCase()); }); });
     return hits.length ? hits[Math.floor(Math.random() * hits.length)] : null;
   }
-  function buildQuiz() {
-    var box = document.getElementById("quiz"); box.innerHTML = "";
+  function buildQuiz() { fillQuiz(document.getElementById("quiz"), G.faults); }
+  function fillQuiz(box, faults) {
+    box.innerHTML = "";
     var used = [], qs = [];
-    G.faults.forEach(function (f) {
+    faults.forEach(function (f, j) {
+      if (faults.length && faults[0].kind === f.kind && j > 0 && qs.length < 3) { var q2 = questionFor(f.kind, used); if (q2) { used.push(q2[1]); qs.push({ kind: f.kind + j, q: q2 }); } return; }
       if (qs.length >= 3 || qs.some(function (x) { return x.kind === f.kind; })) return;
       var q = questionFor(f.kind, used); if (q) { used.push(q[1]); qs.push({ kind: f.kind, q: q }); }
     });
@@ -2029,7 +2152,45 @@
     }
     render();
   }
+  var WEAK = {
+    yield: ["Väjningsplikt", "stad"], stop: ["Stopplikt", "stad"], red: ["Trafikljus", "stad"], ped: ["Övergångsställen", "stad"], turn: ["Fart i svängar", "stad"],
+    speed: ["Hastighet", "land"], close: ["Avstånd", "land"], solid: ["Heldragen linje", "land"], keepRight: ["Hålla till höger", "motorvag"],
+    route: ["Följa vägbeskrivningen", "rondell"], blink: ["Blinkers", "rondell"], lane: ["Byta körfält", "motorvag"], merge: ["Påfart", "motorvag"],
+    accel: ["Påfart", "motorvag"], exit: ["Avfart", "motorvag"], rail: ["Järnvägskorsning", "special"], amb: ["Utryckningsfordon", "special"],
+    bus: ["Buss vid hållplats", "special"], bump: ["Farthinder", "special"], bike: ["Cyklister", "cykel"], bikex: ["Cykelöverfart", "cykel"],
+    tram: ["Spårvagn", "cykel"], park: ["Parkering", "parkering"], sign: ["Vägmärken", "skyltar"], overtake: ["Omkörningsförbud", "vagarbete"],
+    works: ["Vägarbete", "vagarbete"], police: ["Polisens tecken", "polis"], camera: ["Hastighet", "polis"], accident: ["Hinder och olyckor", "polis"],
+    verge: ["Bil på vägrenen", "polis"], glare: ["Helljus", "natt"], aqua: ["Vatten på vägen", "regn"]
+  };
+  function weakPoints() {
+    var fc = store.faultCounts || {}, box = document.getElementById("weak"); box.innerHTML = "";
+    var top = Object.keys(fc).filter(function (k) { return WEAK[k]; }).sort(function (a, b) { return fc[b] - fc[a]; }).slice(0, 2);
+    box.hidden = !top.length;
+    if (!top.length) return;
+    var h = document.createElement("div"); h.className = "weakhead"; h.textContent = "🎯 Det du oftast missar"; box.appendChild(h);
+    top.forEach(function (k) {
+      var row = document.createElement("div"); row.className = "weakrow";
+      var t = document.createElement("span"); t.textContent = WEAK[k][0] + " (" + fc[k] + ")"; row.appendChild(t);
+      var li = LESSONS.findIndex(function (L) { return L.id === WEAK[k][1]; });
+      if (li >= 0) { var b1 = document.createElement("button"); b1.type = "button"; b1.textContent = "Kör"; b1.addEventListener("click", function () { startLesson(li); }); row.appendChild(b1); }
+      var b2 = document.createElement("button"); b2.type = "button"; b2.textContent = "Frågor";
+      b2.addEventListener("click", function () { openPractice(k); }); row.appendChild(b2);
+      box.appendChild(row);
+    });
+  }
+  function openPractice(kind) {
+    var box = document.getElementById("practiceQuiz");
+    fillQuiz(box, [{ kind: kind }, { kind: kind }, { kind: kind }]);
+    document.getElementById("practice").hidden = false;
+  }
+  document.getElementById("practiceClose").addEventListener("click", function () { document.getElementById("practice").hidden = true; });
   function buildMenu() {
+    weakPoints();
+    var dy = store.daily || {}, di = LESSONS.findIndex(function (L) { return L.daily; });
+    var dcard = document.getElementById("daily");
+    var done = dy.last === dayKey(0), streak = dy.last === dayKey(0) || dy.last === dayKey(-1) ? dy.streak || 0 : 0;
+    dcard.querySelector(".dsub").textContent = (done ? "Klar för i dag! " : "En kort runda, ny varje dag. ") + (streak ? "🔥 " + streak + (streak === 1 ? " dag" : " dagar") + " i rad" : "");
+    dcard.onclick = function () { startLesson(di); };
     var box = document.getElementById("lessons"); box.innerHTML = "";
     var row = document.getElementById("badges"); row.innerHTML = "";
     BADGES.forEach(function (bd) {
@@ -2038,7 +2199,10 @@
     });
     var got = (store.badges || []).length;
     document.getElementById("badgeText").textContent = got ? got + " av " + BADGES.length + " körkortsmärken" : "Samla körkortsmärken genom att bli godkänd på lektionerna.";
+    var GROUP = { stad: "Grunder", prov: "Prov" , special: "Mer att öva" };
     LESSONS.forEach(function (L, i) {
+      if (L.daily) return;
+      if (GROUP[L.id]) { var gh = document.createElement("div"); gh.className = "group"; gh.textContent = GROUP[L.id]; box.appendChild(gh); }
       var b = document.createElement("button"); b.type = "button"; b.className = "lesson";
       var st = (store.stars || {})[L.id], best = store.best[L.id];
       if (st == null && best) st = best === "ok" ? 2 : 1;
@@ -2076,8 +2240,10 @@
 
   // ---------- the lessons ----------
   // Distances in metres along each piece. Signs stand on the right; "speed" draws a speed limit sign.
-  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
-  function makeFree(exam) {
+  var RND = Math.random;
+  function pick(a) { return a[Math.floor(RND() * a.length)]; }
+  function makeFree(exam, R, short) {
+    RND = R || Math.random;
     var steps = [], env = "stad", turn = 0;
     var dirWord = { "0": "köra rakt fram", "1": "svänga höger", "-1": "svänga vänster" };
     var hint = {
@@ -2090,21 +2256,21 @@
     steps.push({ type: "road", env: "stad", limit: 50, len: 110, signs: [{ s: 8, speed: 50 }],
       say: [[0, exam ? "Välkommen till körprovet. Jag är inspektören och säger bara vart vi ska. Kör som du brukar, lycka till." :
         "Fri körning! Jag säger vart vi ska, så följer du trafikreglerna. Lycka till."]] });
-    var n = exam ? 7 : 4 + Math.floor(Math.random() * 3);
+    var n = exam ? 7 : short ? 4 : 4 + Math.floor(RND() * 3);
     for (var i = 0; i < n; i++) {
       // A road with something on it, then a junction or a roundabout.
-      if (i === 2 && Math.random() < 0.7) {
+      if (i === 2 && RND() < 0.7) {
         env = env === "stad" ? "land" : "stad";
         steps.push(env === "land"
           ? { type: "road", env: "land", limit: 70, len: 260, signs: [{ s: 4, code: "E6" }, { s: 10, speed: 70 }], oncoming: [30, 150],
-              moose: Math.random() < 0.5 ? { s: 200 } : null, lanes: [0, -3.5],
-              ahead: Math.random() < 0.5 ? [{ s: 90, v: 25, kind: "tractor", ttl: 240 }] : [],
+              moose: RND() < 0.5 ? { s: 200 } : null, lanes: [0, -3.5],
+              ahead: RND() < 0.5 ? [{ s: 90, v: 25, kind: "tractor", ttl: 240 }] : [],
               say: [[12, "Nu lämnar vi tätorten. Här gäller 70."]] }
           : { type: "road", env: "stad", limit: 50, len: 160, signs: [{ s: 4, code: "E5" }, { s: 8, speed: 50 }],
               say: [[10, "Vi kommer in i en tätort igen. 50 gäller."]] });
       }
-      var road = { type: "road", len: 140 + Math.floor(Math.random() * 60), say: [] };
-      var extra = Math.random();
+      var road = { type: "road", len: 140 + Math.floor(RND() * 60), say: [] };
+      var extra = RND();
       if (env === "stad") {
         if (extra < 0.25) { road.zebra = { s: 50, peds: [{ side: pick(["right", "left"]) }] }; road.signs = [{ s: 48, code: "B3" }]; }
         else if (extra < 0.45) { road.ahead = [{ s: 45, v: 17, kind: "bike", ttl: road.len - 12 }]; if (!exam) road.say.push([6, "Cyklist framför. Kör om först när det är fritt, och håll avstånd i sidled."]); }
@@ -2117,19 +2283,19 @@
       else if (extra < 0.65) { road.len = 240; road.lanes = [0, -3.5]; road.accident = { s: 150, len: 22 }; road.props = [{ s: 100, u: 1.0, kind: "triangle" }]; road.oncoming = [20];
         road.say.push([60, "Varningstriangel! En olycka framför. Sakta in och låt mötande passera först."]); }
       else if (extra < 0.75) { road.camera = { s: 100 }; road.signs = [{ s: 20, code: "E24" }]; }
-      var round = Math.random() < 0.3;
+      var round = RND() < 0.3;
       var want;
       if (round) {
         want = pick([1, 2, 3]);
         road.say.push([road.len - 95, "I cirkulationsplatsen tar vi avfart nummer " + want + "." + (exam ? "" : " Blinka höger efter avfarten före.")]);
         steps.push(road);
-        steps.push({ type: "round", want: want, good: "Bra i cirkulationsplatsen!", npcs: Math.random() < 0.7 ? [{ from: "left", to: "right" }] : [] });
+        steps.push({ type: "round", want: want, good: "Bra i cirkulationsplatsen!", npcs: RND() < 0.7 ? [{ from: "left", to: "right" }] : [] });
         turn += want === 1 ? 1 : want === 3 ? -1 : 0;
       } else {
         var ctrl = pick(env === "stad" ? ["hoger", "stopp", "vaj", "ljus", "huvud"] : ["vaj", "stopp", "huvud"]);
         var opts = [0, 1, -1].filter(function (d) { return !(turn >= 1 && d === 1) && !(turn <= -1 && d === -1); });
         want = pick(opts);
-        var tee = (ctrl === "stopp" || ctrl === "vaj") && want !== 0 && Math.random() < 0.5;
+        var tee = (ctrl === "stopp" || ctrl === "vaj") && want !== 0 && RND() < 0.5;
         if (ctrl === "huvud") road.signs = (road.signs || []).concat([{ s: 15, code: "B4" }]);
         road.say.push([road.len - 90, "I nästa korsning ska vi " + dirWord[want] + "." + (exam ? "" : " " + hint[ctrl])]);
         steps.push(road);
@@ -2141,6 +2307,7 @@
       }
     }
     steps.push({ type: "road", len: 130, finish: true, say: [[10, "Bra kört! Stanna här vid kanten, så är vi klara."]] });
+    RND = Math.random;
     return steps;
   }
 
@@ -2294,6 +2461,49 @@
           say: [[22, "Varning för djur. Djurens ögon kan lysa i strålkastarna, sakta in om du ser något."]] },
         { type: "road", len: 160, finish: true, say: [[10, "Bra mörkerkörning! Stanna här vid kanten."]] }
       ] },
+    { id: "cykel", icon: "🚲", name: "Cyklister och spårvagn", what: "Köra om cyklist, cykelöverfart och spårvagn som har företräde",
+      steps: [
+        { type: "road", env: "stad", limit: 50, len: 200, signs: [{ s: 8, speed: 50 }], ahead: [{ s: 60, v: 17, kind: "bike", ttl: 190 }], oncoming: [30],
+          say: [[0, "Nu övar vi med cyklister och spårvagn."], [20, "Cyklist framför. Kör om först när det är fritt, och håll ordentligt avstånd i sidled."]] },
+        { type: "road", len: 180, zebra: { s: 100, bike: true, peds: [{ side: "right", dist: 34 }] }, signs: [{ s: 98, code: "B8" }],
+          say: [[30, "Blå skylt med en cykel: cykelöverfart. Där ska du släppa fram cyklister som är på väg ut."]] },
+        { type: "road", len: 230, tram: { s: 140 }, signs: [{ s: 60, code: "A37" }],
+          say: [[62, "Varning för korsning med spårväg. Spårvagnen har nästan alltid företräde."]] },
+        { type: "road", len: 170, zebra: { s: 90, bike: true, peds: [{ side: "left", dist: 36 }, { side: "right" }] }, signs: [{ s: 88, code: "B8" }],
+          say: [[20, "En cykelöverfart till. Titta åt båda hållen."]] },
+        { type: "road", len: 140, finish: true, say: [[10, "Bra kört bland cyklister och spårvagnar! Stanna här."]] }
+      ] },
+    { id: "regn", icon: "🌧️", name: "Regn och dimma", what: "Längre bromssträcka, vattenplaning och dålig sikt", weather: "rain",
+      steps: [
+        { type: "road", env: "land", limit: 80, len: 360, signs: [{ s: 6, speed: 80 }], puddles: [200], ahead: [{ s: 120, v: 65, brakeAt: 300 }], oncoming: [60],
+          say: [[0, "Det regnar. Vägen är våt, så bromssträckan blir längre. Öka avståndet till bilen framför."],
+                [150, "Det står vatten på vägen. Kör du för fort kan bilen börja flyta: vattenplaning."]] },
+        { type: "road", len: 380, fog: true, ahead: [{ s: 220, v: 25, kind: "tractor", ttl: 370 }], lanes: [0, -3.5], oncoming: [120],
+          say: [[5, "Nu kommer dimma. Sikten är kort, så sänk farten så att du kan stanna på den sträcka du ser."],
+                [150, "Kör inte om i dimma, du ser inte om något kommer emot."]] },
+        { type: "road", len: 160, finish: true, say: [[10, "Bra i regn och dimma! Stanna här vid kanten."]] }
+      ] },
+    { id: "halka", icon: "🧊", name: "Halkbanan", what: "Som riskutbildningen: undanmanöver och bromsning på halt underlag", weather: "ice", grip: 0.3,
+      steps: [
+        { type: "road", env: "land", limit: 50, len: 300, signs: [{ s: 6, speed: 50 }], popup: { s: 200 },
+          say: [[0, "Välkommen till halkbanan. Underlaget är jättehalt. Kör upp i ungefär 40 km/h."],
+                [80, "Snart dyker det upp ett hinder. Bromsa och styr runt det, eller stanna före."]] },
+        { type: "road", len: 260, brakeTest: { s: 160 },
+          say: [[20, "Nu bromsövning. Kör upp i 40 km/h igen och tryck bromsen i botten när jag säger till."]] },
+        { type: "road", len: 260, popup: { s: 170 },
+          say: [[30, "En gång till: hinder framåt. Titta dit du vill styra, inte på hindret."]] },
+        { type: "road", len: 140, finish: true, say: [[10, "Bra kört på halkbanan! Nu vet du hur lång bromssträckan blir på is."]] }
+      ] },
+    { id: "parkering", icon: "🅿️", name: "Parkering och backning", what: "Fickparkera mellan två bilar med backen", manual: true, reverse: true,
+      steps: [
+        { type: "road", env: "stad", limit: 30, len: 120, signs: [{ s: 8, speed: 30 }],
+          say: [[0, "Nu ska vi fickparkera. Du styr själv, och backen läggs i med R eller R-knappen när bilen står still."],
+                [60, "Kör fram och stanna bredvid bilen som står framför luckan till höger."]] },
+        { type: "road", len: 200, parking: true, parked: [40, 50.5, 61, 75, 85.5], pocket: [61, 75],
+          say: [[50, "Luckan är mellan den tredje och fjärde bilen. Stanna när din bil är i höjd med den fjärde bilen, lägg i backen och vrid åt höger. När bilen står snett in, vrid åt vänster och räta upp."]] }
+      ] },
+    { id: "dag", icon: "📅", name: "Dagens körning", what: "En kort runda, samma hela dagen", daily: true,
+      make: function () { return makeFree(false, rng(dayNumber()), true); }, steps: [] },
     { id: "prov", icon: "🎓", name: "Uppkörning", what: "Ett körprov med inspektör: en lång runda där allt bedöms tyst, och resultatet kommer efteråt", exam: true,
       make: function () { return makeFree(true); }, steps: [] },
     { id: "fri", icon: "🎲", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
