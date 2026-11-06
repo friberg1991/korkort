@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1217">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Övningskör med en körskolelärare i svensk trafik.">
+<title>Övningskörning</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<style>
+:root {
+  --bg: #0d1217; --panel: #151b21; --btn: #1f252b; --line: rgba(255,255,255,0.1);
+  --accent: #0cd29d; --text: #e8e8e8; --dim: #9aa0a6; --good: #2f9e5a; --bad: #c0443f; --gold: #ffc040;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+  font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+button { font: inherit; color: inherit; cursor: pointer; }
+a { color: var(--accent); }
+
+/* Menu and result screens */
+.screen { position: fixed; inset: 0; overflow-y: auto; padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); background: var(--bg); z-index: 20; }
+.wrap { max-width: 560px; margin: 0 auto; }
+.screen h1 { font-size: 24px; margin: 4px 0 4px; }
+.screen p { color: var(--dim); margin: 6px 0 14px; }
+.lesson { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 14px; margin: 0 0 10px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.lesson .num { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--btn); color: var(--accent); font-weight: 700; }
+.lesson .txt { flex: 1; min-width: 0; }
+.lesson .name { font-weight: 650; }
+.lesson .what { color: var(--dim); font-size: 14px; }
+.lesson .mark { flex: none; font-size: 13px; padding: 3px 8px; border-radius: 99px; }
+.mark.ok { background: rgba(47,158,90,0.25); color: #7fe0a4; }
+.mark.no { background: rgba(192,68,63,0.25); color: #f0a09c; }
+.row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: var(--dim); }
+.row input { width: 20px; height: 20px; accent-color: var(--accent); }
+.keys { font-size: 14px; color: var(--dim); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.btn { display: block; width: 100%; padding: 13px; margin: 8px 0 0; border: 0; border-radius: 12px; background: var(--btn); text-align: center; text-decoration: none; color: var(--text); }
+.btn.primary { background: var(--accent); color: #06231a; font-weight: 700; }
+.verdict { font-size: 28px; font-weight: 800; margin: 8px 0 4px; }
+.verdict.ok { color: #7fe0a4; } .verdict.no { color: #f0a09c; }
+.fault { padding: 10px 12px; margin: 0 0 8px; border-radius: 12px; background: var(--panel); border-left: 4px solid var(--gold); }
+.fault.serious { border-left-color: var(--bad); }
+.fault b { display: block; }
+.fault span { color: var(--dim); font-size: 15px; }
+
+/* Driving */
+#game { position: fixed; inset: 0; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#say { position: absolute; left: 10px; right: 10px; top: calc(8px + env(safe-area-inset-top)); max-width: 620px; margin: 0 auto;
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 16px; background: rgba(13,18,23,0.88);
+  border: 1px solid var(--line); box-shadow: 0 4px 18px rgba(0,0,0,0.35); transition: opacity .25s; pointer-events: none; }
+#say.bad { border-color: var(--bad); background: rgba(70,20,18,0.92); }
+#say.good { border-color: var(--good); }
+#say .face { flex: none; width: 38px; height: 38px; border-radius: 50%; background: #2a3a46; display: grid; place-items: center; font-size: 22px; }
+#say .who { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: .03em; }
+#say .text { font-size: 16px; line-height: 1.35; }
+#hud { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; border-radius: 16px; background: rgba(13,18,23,0.82); pointer-events: none; }
+#speed { font-size: 30px; font-weight: 800; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+#speed.over { color: #ff8a80; }
+#kmh { font-size: 12px; color: var(--dim); margin-left: -6px; }
+#limit { width: 40px; height: 40px; border-radius: 50%; background: #f8c628; border: 6px solid #e03832; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #111; }
+.blink { font-size: 22px; color: #3a4148; width: 22px; text-align: center; }
+.blink.on { color: #ffa61e; }
+#faults { font-size: 13px; color: var(--dim); min-width: 40px; }
+#pause { position: absolute; right: 10px; bottom: calc(205px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.8); font-size: 18px; }
+#flash { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 rgba(192,68,63,0); transition: box-shadow .4s; }
+#flash.on { box-shadow: inset 0 0 0 10px rgba(192,68,63,0.85); transition: none; }
+
+/* Touch pad: blinkers left, pedals right */
+#pad { position: absolute; left: 0; right: 0; bottom: calc(70px + env(safe-area-inset-bottom)); height: 0; }
+#pad button { position: absolute; border: 2px solid rgba(255,255,255,0.18); background: rgba(13,18,23,0.55); border-radius: 18px; font-weight: 800; touch-action: none; }
+#pad button.down { background: rgba(12,210,157,0.35); }
+#bl { left: 12px; bottom: 0; width: 64px; height: 64px; font-size: 26px; }
+#br { left: 84px; bottom: 0; width: 64px; height: 64px; font-size: 26px; }
+#gas { right: 12px; bottom: 0; width: 76px; height: 120px; font-size: 15px; }
+#brake { right: 98px; bottom: 0; width: 84px; height: 76px; font-size: 15px; }
+#pad .on { color: #ffa61e; border-color: #ffa61e; }
+#hud { bottom: calc(14px + env(safe-area-inset-bottom)); }
+</style>
+</head>
+<body>
+
+<div id="menu" class="screen">
+  <div class="wrap">
+    <h1>Övningskörning</h1>
+    <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
+    <div id="lessons"></div>
+    <label class="row"><input type="checkbox" id="optVoice"> Läraren pratar (uppläsning)</label>
+    <label class="row"><input type="checkbox" id="optSound"> Ljud (blinkers, sirener)</label>
+    <div class="keys" id="keysHelp">
+      Tangentbord: <b>↑</b> gasa, <b>↓</b> bromsa, <b>←</b> / <b>→</b> blinka (blinkers styr svängar och filbyten), <b>Esc</b> paus.<br>
+      Mobil: knapparna på skärmen. Blinka åt det håll du ska svänga, så svänger bilen i korsningen.
+    </div>
+    <a class="btn" href="./">Tillbaka till frågorna</a>
+  </div>
+</div>
+
+<div id="game" hidden>
+  <canvas id="cv"></canvas>
+  <div id="flash"></div>
+  <div id="say"><div class="face">🧑‍🏫</div><div><div class="who">LÄRAREN</div><div class="text" id="sayText"></div></div></div>
+  <div id="pad">
+    <button id="bl" type="button" aria-label="Blinka vänster">◀</button>
+    <button id="br" type="button" aria-label="Blinka höger">▶</button>
+    <button id="brake" type="button">BROMS</button>
+    <button id="gas" type="button">GAS</button>
+  </div>
+  <button id="pause" type="button" aria-label="Paus">⏸</button>
+  <div id="hud">
+    <span class="blink" id="hudL">◀</span>
+    <span id="speed">0</span><span id="kmh">km/h</span>
+    <div id="limit">50</div>
+    <span class="blink" id="hudR">▶</span>
+  </div>
+</div>
+
+<div id="paused" class="screen" hidden>
+  <div class="wrap">
+    <h1>Paus</h1>
+    <button class="btn primary" id="resume" type="button">Fortsätt köra</button>
+    <button class="btn" id="restart" type="button">Börja om lektionen</button>
+    <button class="btn" id="quit" type="button">Till lektionerna</button>
+  </div>
+</div>
+
+<div id="result" class="screen" hidden>
+  <div class="wrap">
+    <div id="verdict" class="verdict"></div>
+    <p id="summary"></p>
+    <div id="faultList"></div>
+    <button class="btn primary" id="next" type="button">Nästa lektion</button>
+    <button class="btn" id="again" type="button">Kör lektionen igen</button>
+    <button class="btn" id="toMenu" type="button">Till lektionerna</button>
+  </div>
+</div>
+
+<script src="spel.js"></script>
+</body>
+</html>
