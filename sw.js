@@ -1,6 +1,6 @@
 // Keeps every file of the app on the phone, so it works without internet.
 // build.ps1 fills in the version and the file list.
-var VERSION = "korkort-8739a996ae99";
+var VERSION = "korkort-d25fd5bb82a9";
 var FILES = [
   "./",
   "app.js",
@@ -406,7 +406,9 @@ var FILES = [
   "situations/k59.jpg",
   "spel.html",
   "spel.js",
-  "style.css"
+  "spel3d.js",
+  "style.css",
+  "three.min.js"
 ];
 
 self.addEventListener("install", function (e) {

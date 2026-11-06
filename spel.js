@@ -1245,14 +1245,7 @@
     var c = G.cam;
     ctx.save();
     ctx.translate(W / 2, H * 0.66); ctx.rotate(-c.a); ctx.scale(c.sc, c.sc); ctx.translate(-c.x, -c.y);
-    var vis = G.course.pieces.filter(function (q) { return q.s0 - G.p.s < 320 && G.p.s - (q.s0 + (q.len || 0)) < 140; });
-    for (var pass = 0; pass < 3; pass++) {
-      vis.forEach(function (q) {
-        if (q.kind === "road" || q.kind === "mv") { if (pass === 0) drawRoadGround(q); else if (pass === 1) drawRoadAsphalt(q); else drawRoadMarks(q); }
-        else if (q.kind === "junction") drawJunction(q, pass);
-        else drawRound(q, pass);
-      });
-    }
+    drawPieces();
     drawBarriers();
     G.npcs.forEach(function (n) {
       if (n.mode === "walk") drawWalker(n, npcPose(n));
@@ -1263,7 +1256,30 @@
     ctx.restore();
     drawSigns();
     drawLights();
-    // HUD
+    drawHud(pc);
+  }
+  function drawPieces() {
+    var vis = G.course.pieces.filter(function (q) { return q.s0 - G.p.s < 320 && G.p.s - (q.s0 + (q.len || 0)) < 140; });
+    for (var pass = 0; pass < 3; pass++) {
+      vis.forEach(function (q) {
+        if (q.kind === "road" || q.kind === "mv") { if (pass === 0) drawRoadGround(q); else if (pass === 1) drawRoadAsphalt(q); else drawRoadMarks(q); }
+        else if (q.kind === "junction") drawJunction(q, pass);
+        else drawRound(q, pass);
+      });
+    }
+  }
+  // The ground seen from above, painted into another canvas: the 3D view lays it on the ground.
+  function paintGround(c2, cx, cy, sc, size) {
+    var saved = ctx; ctx = c2;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
+    ctx.save(); ctx.translate(size / 2, size / 2); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
+    drawPieces();
+    ctx.restore();
+    ctx = saved;
+  }
+  function drawHud(pc) {
+    pc = pc || curPiece();
     var kmh = Math.round(G.p.v * KMH);
     hud.speed.textContent = kmh;
     hud.speed.className = kmh > pc.limit + 3 ? "over" : "";
@@ -1299,8 +1315,14 @@
       if (G.finishT > 0 && G.t > G.finishT + 1.2) finish();
     }
     updateCam(dt);
-    draw();
+    var use3d = store.view3d && window.SPEL3D && window.SPEL3D.ready();
+    cv.style.display = use3d ? "none" : "";
+    if (use3d) { window.SPEL3D.render(G, dt); drawHud(); }
+    else { if (window.SPEL3D) window.SPEL3D.hide(); draw(); }
+    viewBtn.textContent = use3d ? "2D" : "3D";
   }
+  var viewBtn = document.getElementById("view");
+  viewBtn.addEventListener("click", function () { store.view3d = !store.view3d; saveStore(); });
 
   // ---------- screens ----------
   function show(id) {
@@ -1343,9 +1365,11 @@
     });
     var v = document.getElementById("optVoice"), s = document.getElementById("optSound");
     v.checked = !!store.voice; s.checked = !!store.sound;
+    document.getElementById("opt3d").checked = !!store.view3d;
     document.getElementById("pad").hidden = false;
   }
   document.getElementById("optVoice").addEventListener("change", function (e) { store.voice = e.target.checked; saveStore(); if (store.voice) speak("Hej! Jag är din lärare."); });
+  document.getElementById("opt3d").addEventListener("change", function (e) { store.view3d = e.target.checked; saveStore(); });
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);
   document.getElementById("resume").addEventListener("click", function () { G.paused = false; show("game"); });
@@ -1435,7 +1459,9 @@
   ];
 
   // Hooks for automated checks.
-  window.SPEL = { lessons: LESSONS, start: startLesson, state: function () { return G; }, keys: keys, setBlink: setBlink };
+  window.SPEL = { lessons: LESSONS, start: startLesson, state: function () { return G; }, keys: keys, setBlink: setBlink,
+    api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
+      JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");

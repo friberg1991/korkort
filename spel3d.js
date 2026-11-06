@@ -1,0 +1,320 @@
+// Övningskörning in 3D, seen from the driver's seat. Low poly, built with three.js.
+// The game itself (course, traffic, rules, instructor) is spel.js; this only draws it.
+// World (x, y) in spel.js is (x, z) here with y up, so a heading a looks along
+// (sin a, 0, -cos a), and an object turned to heading a has rotation.y = -a.
+// The roads are not rebuilt in 3D: spel.js paints them seen from above into a
+// canvas that lies on the ground as a texture around the car.
+"use strict";
+(function () {
+  if (!window.THREE) return;
+  var T = window.THREE;
+  var GROUND_PX = 2048, GROUND_M = 160, AHEAD = 45;   // ground texture size and how far ahead its centre sits
+  var renderer = null, scene, camera, cockpit, wheel, grass, ground, groundCv, groundTex, gctx, canvas;
+  var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
+  var camA = 0, wheelA = 0, prevA = null, failed = false;
+  var mats = {}, geos = {};
+
+  function mat(color, basic) {
+    var key = color + (basic ? "b" : "");
+    if (!mats[key]) mats[key] = basic ? new T.MeshBasicMaterial({ color: color }) : new T.MeshLambertMaterial({ color: color, flatShading: true });
+    return mats[key];
+  }
+  function box(w, h, d) { var k = "b" + w + "," + h + "," + d; return geos[k] || (geos[k] = new T.BoxGeometry(w, h, d)); }
+  function mesh(g, m, x, y, z) { var o = new T.Mesh(g, m); o.position.set(x || 0, y || 0, z || 0); return o; }
+
+  function init() {
+    try {
+      canvas = document.createElement("canvas"); canvas.id = "cv3";
+      var game = document.getElementById("game");
+      game.insertBefore(canvas, document.getElementById("flash"));
+      renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    } catch (e) { failed = true; if (canvas) canvas.remove(); return; }
+    scene = new T.Scene();
+    var sky = 0xc4dbec;
+    scene.background = new T.Color(sky);
+    scene.fog = new T.Fog(sky, 55, 135);
+    camera = new T.PerspectiveCamera(70, 1, 0.05, 500);
+    camera.rotation.order = "YXZ";
+    scene.add(camera);
+    scene.add(new T.HemisphereLight(0xffffff, 0x6a8a50, 1.0));
+    var sun = new T.DirectionalLight(0xffffff, 0.8); sun.position.set(40, 80, 25); scene.add(sun);
+    grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.03, 0);
+    grass.rotation.x = -Math.PI / 2; scene.add(grass);
+    groundCv = document.createElement("canvas"); groundCv.width = groundCv.height = GROUND_PX;
+    gctx = groundCv.getContext("2d");
+    groundTex = new T.CanvasTexture(groundCv);
+    groundTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    if (T.SRGBColorSpace) groundTex.colorSpace = T.SRGBColorSpace;
+    ground = mesh(new T.PlaneGeometry(GROUND_M, GROUND_M), new T.MeshLambertMaterial({ map: groundTex }), 0, 0, 0);
+    ground.rotation.x = -Math.PI / 2; scene.add(ground);
+    buildCockpit();
+    window.addEventListener("resize", resize);
+    resize();
+  }
+
+  // The inside of the red car: dashboard, steering wheel, bonnet and pillars, fixed to the camera.
+  function buildCockpit() {
+    cockpit = new T.Group(); camera.add(cockpit);
+    var dark = mat(0x23272c), darker = mat(0x16191c), red = mat(0xe03832);
+    cockpit.add(mesh(box(2.6, 0.32, 0.7), dark, 0.35, -0.52, -0.85));        // dashboard
+    cockpit.add(mesh(box(2.6, 0.04, 0.12), darker, 0.35, -0.35, -1.18));       // its front edge, by the windscreen
+    var hood = mesh(box(1.8, 0.12, 2.0), red, 0.35, -0.72, -2.2); cockpit.add(hood);
+    [[-0.62, -0.95], [1.35, -1.0]].forEach(function (q) {                    // windscreen pillars
+      var pil = mesh(box(0.08, 1.4, 0.08), darker, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
+    });
+    cockpit.add(mesh(box(2.4, 0.12, 0.5), darker, 0.35, 0.62, -0.75));       // roof edge
+    // Steering wheel in front of the driver.
+    var holder = new T.Group(); holder.position.set(0, -0.3, -0.6); holder.rotation.x = -0.42; cockpit.add(holder);
+    wheel = new T.Group(); holder.add(wheel);
+    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.024, 6, 18), mat(0x1b1e22)));
+    [0, 2.1, -2.1].forEach(function (a) {
+      var sp = mesh(box(0.025, 0.17, 0.02), mat(0x2c3136), Math.sin(a) * 0.09, -Math.cos(a) * 0.09, 0);
+      sp.rotation.z = a; wheel.add(sp);
+    });
+    var hub = mesh(new T.CylinderGeometry(0.05, 0.05, 0.04, 8), mat(0x2c3136)); hub.rotation.x = Math.PI / 2; wheel.add(hub);
+    wheel.add(mesh(box(0.04, 0.04, 0.03), mat(0xe03832), 0, 0.19, 0.01));  // top mark, shows the wheel turning
+  }
+
+  function resize() {
+    if (!renderer) return;
+    var w = window.innerWidth, h = window.innerHeight, asp = w / h;
+    renderer.setSize(w, h, false);
+    camera.aspect = asp;
+    // About 90 degrees across, at least 60 high so the wheel shows; capped in portrait.
+    camera.fov = Math.min(92, Math.max(60, 2 * Math.atan(Math.tan(45 * Math.PI / 180) / asp) * 180 / Math.PI));
+    camera.updateProjectionMatrix();
+  }
+
+  function clearAll() {
+    objs.forEach(function (o) { scene.remove(o); });
+    Object.keys(npcMeshes).forEach(function (k) { scene.remove(npcMeshes[k]); });
+    signMeshes.forEach(function (o) { scene.remove(o.obj); });
+    lightSets.forEach(function (o) { o.groups.forEach(function (g) { scene.remove(g); }); });
+    objs = []; npcMeshes = {}; signMeshes = []; lightSets = []; groundAt = null; prevA = null;
+  }
+
+  // ---------- things along the road ----------
+  function place(o, x, y, a) { o.position.x = x; o.position.z = y; o.rotation.y = -a; scene.add(o); objs.push(o); return o; }
+  function tree(x, y, r) {
+    var g = new T.Group();
+    g.add(mesh(new T.CylinderGeometry(0.15, 0.22, 1.6, 5), mat(0x6b4a2f), 0, 0.8, 0));
+    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(0x3f6e30), 0, 1.4 + r * 0.8, 0);
+    top.scale.y = 1.25; g.add(top);
+    return place(g, x, y, 0);
+  }
+  function house(api, pc, d, rnd) {
+    var c = api.toG(pc.P, d.u + d.dep / 2, d.w + d.len / 2);
+    var hgt = 5 + rnd * 5, g = new T.Group();
+    g.add(mesh(box(d.dep, hgt, d.len), mat(d.c), 0, hgt / 2, 0));
+    var roof = mesh(new T.ConeGeometry(Math.SQRT1_2, 1, 4), mat(d.roof), 0, hgt + 1.1, 0);
+    roof.rotation.y = Math.PI / 4; roof.scale.set(d.dep, 2.2, d.len); g.add(roof);
+    // A few windows on the road side.
+    var side = d.u > 0 ? -1 : 1, win = mat(0x34404e);
+    for (var k = -d.len / 2 + 2; k < d.len / 2 - 1.5; k += 3.2) {
+      g.add(mesh(box(0.05, 1.1, 1.3), win, side * (d.dep / 2 + 0.03), hgt * 0.55, k));
+      if (hgt > 7) g.add(mesh(box(0.05, 1.1, 1.3), win, side * (d.dep / 2 + 0.03), hgt * 0.85 - 0.3, k));
+    }
+    return place(g, c.x, c.y, pc.P.a);
+  }
+  function buildPiece(api, pc) {
+    pc.built3d = true;
+    var n = 0;
+    (pc.decor || []).forEach(function (d) {
+      n++;
+      if (d.t === "house") house(api, pc, d, (n * 0.37) % 1);
+      else if (d.t === "tree") { var q = api.toG(pc.P, d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
+    });
+    if (pc.kind === "round") tree(pc.C.x, pc.C.y, 2.4);
+    if (pc.light) buildLights(api, pc);
+  }
+
+  // Signs stand on the right and face the traffic coming towards them.
+  var speedTex = {};
+  function speedTexture(n) {
+    if (speedTex[n]) return speedTex[n];
+    var c = document.createElement("canvas"); c.width = c.height = 128; var x = c.getContext("2d");
+    x.fillStyle = "#fff"; x.beginPath(); x.arc(64, 64, 63, 0, 7); x.fill();
+    x.fillStyle = "#e03832"; x.beginPath(); x.arc(64, 64, 60, 0, 7); x.fill();
+    x.fillStyle = "#f8c628"; x.beginPath(); x.arc(64, 64, 44, 0, 7); x.fill();
+    x.fillStyle = "#111"; x.font = "800 " + (n >= 100 ? 40 : 54) + "px system-ui, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillText(String(n), 64, 67);
+    var t = new T.CanvasTexture(c); if (T.SRGBColorSpace) t.colorSpace = T.SRGBColorSpace;
+    return (speedTex[n] = t);
+  }
+  var imgTex = {};
+  function signTexture(api, code) {
+    if (imgTex[code]) return imgTex[code];
+    var img = api.signImg(code), t = new T.Texture(img);
+    if (T.SRGBColorSpace) t.colorSpace = T.SRGBColorSpace;
+    if (img.complete) t.needsUpdate = true; else img.addEventListener("load", function () { t.needsUpdate = true; });
+    return (imgTex[code] = t);
+  }
+  function buildSign(api, G, sg) {
+    var pose = G.course.poseAt(sg.s), q = api.toG(pose, sg.u, 0), g = new T.Group();
+    g.add(mesh(new T.CylinderGeometry(0.04, 0.04, 2.2, 6), mat(0x8a8e94), 0, 1.1, 0));
+    var tex = sg.speed ? speedTexture(sg.speed) : signTexture(api, sg.code);
+    var face = new T.Mesh(new T.PlaneGeometry(1.15, 1.15), new T.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.3, fog: true }));
+    face.position.set(0, 2.55, 0.03); g.add(face);
+    var back = mesh(new T.PlaneGeometry(1.0, 1.0), mat(0x8a8e94), 0, 2.55, 0); back.rotation.y = Math.PI; g.add(back);
+    g.position.set(q.x, 0, q.y); g.rotation.y = -pose.a; scene.add(g);
+    return g;
+  }
+
+  // Traffic lights at each corner of a junction with signals.
+  function buildLights(api, pc) {
+    var set = { pc: pc, groups: [], lamps: [] };
+    [270, 0, 90, 180].forEach(function (arm) {
+      var r = api.rot({ x: api.HW + 1.2, y: -api.JH - 1 }, arm - 270), q = api.toG(pc.C, r.x, r.y);
+      var g = new T.Group();
+      g.add(mesh(new T.CylinderGeometry(0.06, 0.06, 2.6, 6), mat(0x55595e), 0, 1.3, 0));
+      g.add(mesh(box(0.4, 1.1, 0.3), mat(0x15181c), 0, 3.0, 0));
+      var lamps = [0xff3b30, 0xffcc00, 0x34c759].map(function (col, i) {
+        var m = new T.MeshBasicMaterial({ color: 0x333a40 });
+        var l = mesh(new T.CylinderGeometry(0.13, 0.13, 0.05, 10), m, 0, 3.35 - i * 0.34, 0.17); l.rotation.x = Math.PI / 2; g.add(l);
+        return { m: m, on: col };
+      });
+      g.position.set(q.x, 0, q.y); g.rotation.y = -(pc.C.a + (270 - arm) * Math.PI / 180); scene.add(g);
+      set.groups.push(g); set.lamps.push({ arm: arm, lamps: lamps });
+    });
+    lightSets.push(set);
+  }
+  function updateLights(api) {
+    lightSets.forEach(function (set) {
+      set.lamps.forEach(function (a) {
+        var ph = api.lightFor(set.pc, a.arm);
+        var on = [ph === "red" || ph === "redyellow", ph === "yellow" || ph === "redyellow", ph === "green"];
+        a.lamps.forEach(function (l, i) { l.m.color.setHex(on[i] ? l.on : 0x333a40); });
+      });
+    });
+  }
+
+  // ---------- road users ----------
+  function makeNpc(n) {
+    var g = new T.Group(), col = n.color || "#286ee0";
+    if (n.kind === "ped" || n.kind === "child") {
+      var h = n.kind === "child" ? 1.15 : 1.7;
+      g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
+      g.add(mesh(box(0.28, h * 0.45, 0.2), mat(0x333840), 0, h * 0.22, 0));
+      g.add(mesh(new T.IcosahedronGeometry(h * 0.1, 0), mat(0xe8c39e), 0, h * 0.93, 0));
+    } else if (n.kind === "moose") {
+      g.add(mesh(box(0.9, 1.0, 2.4), mat(0x5b3a22), 0, 1.6, 0));
+      g.add(mesh(box(0.45, 0.6, 0.8), mat(0x4a2e1a), 0, 2.0, -1.5));
+      g.add(mesh(box(1.4, 0.1, 0.3), mat(0xc8b48a), 0, 2.4, -1.4));
+      [[-0.3, -0.9], [0.3, -0.9], [-0.3, 0.9], [0.3, 0.9]].forEach(function (l) { g.add(mesh(box(0.15, 1.1, 0.15), mat(0x3a2414), l[0], 0.55, l[1])); });
+    } else if (n.kind === "train") {
+      for (var k = 0; k < 4; k++) {
+        g.add(mesh(box(3.2, 3.6, 12.8), mat(k === 0 ? 0xc0392b : 0x8e959e), 0, 2.0, k * 13.5));
+        g.add(mesh(box(3.25, 0.6, 11), mat(0x30363e), 0, 2.6, k * 13.5));
+      }
+    } else {
+      var L = n.hl * 2, Wd = n.hw * 2;
+      if (n.kind === "bus") {
+        g.add(mesh(box(Wd, 2.8, L), mat(col), 0, 1.7, 0));
+        g.add(mesh(box(Wd + 0.02, 0.9, L - 1.2), mat(0x303a4a), 0, 2.2, 0.3));
+      } else if (n.kind === "truck") {
+        g.add(mesh(box(Wd, 2.6, 2.4), mat(0xeceef0), 0, 1.6, -n.hl + 1.2));
+        g.add(mesh(box(Wd + 0.02, 0.8, 0.1), mat(0x303a4a), 0, 2.2, -n.hl + 0.02));
+        g.add(mesh(box(Wd, 3.2, L - 2.8), mat(0x9aa3b4), 0, 1.9, 1.4));
+      } else if (n.kind === "tractor") {
+        g.add(mesh(box(Wd - 0.6, 1.0, L), mat(0x2f8a3a), 0, 1.0, 0));
+        g.add(mesh(box(Wd - 0.7, 1.3, 1.3), mat(0x303a4a), 0, 2.1, 0.5));
+        [[-1, 1, 0.75], [1, 1, 0.75], [-1, -1, 0.45], [1, -1, 0.45]].forEach(function (w) {
+          var wh = mesh(new T.CylinderGeometry(w[2], w[2], 0.4, 10), mat(0x1c1c1c), w[0] * (n.hw - 0.1), w[2], w[1] * 1.0);
+          wh.rotation.z = Math.PI / 2; g.add(wh);
+        });
+      } else {
+        var body = n.kind === "amb" ? "#f0e040" : col;
+        g.add(mesh(box(Wd, 0.75, L), mat(body), 0, 0.6, 0));
+        g.add(mesh(box(Wd - 0.15, 0.6, L * 0.5), mat(body), 0, 1.25, 0.15));
+        g.add(mesh(box(Wd - 0.13, 0.42, L * 0.46), mat(0x303a4a), 0, 1.25, 0.15));
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (w) {
+          var wh = mesh(new T.CylinderGeometry(0.33, 0.33, 0.22, 8), mat(0x1c1c1c), w[0] * (n.hw - 0.08), 0.33, w[1] * (n.hl - 0.8));
+          wh.rotation.z = Math.PI / 2; g.add(wh);
+        });
+        g.add(mesh(box(Wd - 0.3, 0.12, 0.05), mat(0xd04030, true), 0, 0.75, n.hl + 0.01));   // rear lights
+        if (n.kind === "amb") {
+          g.userData.siren = [mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), -0.35, 1.65, -0.3),
+                              mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), 0.35, 1.65, -0.3)];
+          g.userData.siren.forEach(function (o) { g.add(o); });
+        }
+      }
+      // Indicator lamps on each corner; lit on the side the vehicle blinks to.
+      g.userData.blink = [-1, 1].map(function (side) {
+        var m = new T.MeshBasicMaterial({ color: 0x4a3a20 });
+        [-1, 1].forEach(function (end) { g.add(mesh(box(0.14, 0.12, 0.14), m, side * (n.hw - 0.02), 0.85, end * (n.hl - 0.05))); });
+        return m;
+      });
+    }
+    scene.add(g);
+    return g;
+  }
+  function updateNpcs(api, G) {
+    var seen = {};
+    G.npcs.forEach(function (n) {
+      var g = npcMeshes[n.id] || (npcMeshes[n.id] = makeNpc(n));
+      seen[n.id] = true;
+      var pose = n.mode === "train" ? n.poly.at(n.t) : api.npcPose(n);
+      g.position.x = pose.x; g.position.z = pose.y; g.rotation.y = -pose.a;
+      if (n.mode === "walk" && n.kind !== "moose") g.position.y = Math.abs(Math.sin(G.t * 9)) * 0.05;
+      if (g.userData.blink) {
+        var on = Math.floor(G.t * 2.6) % 2 === 1;
+        g.userData.blink[0].color.setHex(n.blink < 0 && on ? 0xffa61e : 0x4a3a20);
+        g.userData.blink[1].color.setHex(n.blink > 0 && on ? 0xffa61e : 0x4a3a20);
+      }
+      if (g.userData.siren) {
+        var f = Math.floor(G.t * 6) % 2;
+        g.userData.siren[0].material.color.setHex(f ? 0x4aa0ff : 0x10224a);
+        g.userData.siren[1].material.color.setHex(f ? 0x10224a : 0x4aa0ff);
+      }
+    });
+    Object.keys(npcMeshes).forEach(function (k) { if (!seen[k]) { scene.remove(npcMeshes[k]); delete npcMeshes[k]; } });
+  }
+
+  // ---------- each frame ----------
+  function render(G, dt) {
+    if (!renderer) init();
+    if (failed) return;
+    var api = window.SPEL.api;
+    canvas.style.display = "";
+    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; camA = G.p.a; }
+    var p = G.p;
+    // The ground texture follows the car, centred a little ahead.
+    var fx = Math.sin(p.a), fy = -Math.cos(p.a);
+    var cx = p.x + fx * AHEAD, cy = p.y + fy * AHEAD;
+    if (!groundAt || Math.hypot(cx - groundAt.x, cy - groundAt.y) > 28 || G.course.pieces.length !== lastPieces) {
+      api.paint(gctx, cx, cy, GROUND_PX / GROUND_M, GROUND_PX);
+      groundTex.needsUpdate = true;
+      ground.position.set(cx, 0, cy);
+      groundAt = { x: cx, y: cy };
+    }
+    if (G.course.pieces.length !== lastPieces) lastPieces = G.course.pieces.length;
+    G.course.pieces.forEach(function (pc) {
+      if (!pc.built3d && pc.s0 - p.s < 300 && p.s - (pc.s0 + (pc.len || 0)) < 150) buildPiece(api, pc);
+    });
+    G.course.signs.forEach(function (sg) {
+      if (!sg.built3d && Math.abs(sg.s - p.s) < 220) { sg.built3d = true; signMeshes.push({ obj: buildSign(api, G, sg) }); }
+    });
+    updateLights(api);
+    updateNpcs(api, G);
+    grass.position.x = p.x; grass.position.z = p.y;
+    // Driver's eye: left of the centre of the car, a little behind its middle.
+    camA += api.angDiff(p.a, camA) * Math.min(1, dt * 7);
+    var rx = Math.cos(p.a), ry = Math.sin(p.a);
+    camera.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22, p.y - ry * 0.36 - fy * 0.2);
+    camera.rotation.set(-0.04, -camA, 0);
+    // Steering wheel turns with how fast the car turns.
+    if (prevA === null) prevA = p.a;
+    var rate = dt > 0 ? api.angDiff(p.a, prevA) / dt : 0; prevA = p.a;
+    var want = Math.max(-2.6, Math.min(2.6, -rate * 2.2));
+    wheelA += (want - wheelA) * Math.min(1, dt * 6);
+    wheel.rotation.z = wheelA;
+    renderer.render(scene, camera);
+  }
+
+  window.SPEL3D = {
+    ready: function () { if (!renderer && !failed) init(); return !failed; },
+    render: render,
+    hide: function () { if (canvas) canvas.style.display = "none"; }
+  };
+})();

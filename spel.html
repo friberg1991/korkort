@@ -73,7 +73,9 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 .blink { font-size: 22px; color: #3a4148; width: 22px; text-align: center; }
 .blink.on { color: #ffa61e; }
 #faults { font-size: 13px; color: var(--dim); min-width: 40px; }
-#pause { position: absolute; right: 10px; bottom: calc(205px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.8); font-size: 18px; }
+#pause { position: absolute; right: 10px; bottom: calc(205px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.8); font-size: 15px; font-weight: 800; }
+#view { position: absolute; right: 10px; bottom: calc(257px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.8); font-size: 14px; font-weight: 800; }
+#cv3 { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 #flash { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 rgba(192,68,63,0); transition: box-shadow .4s; }
 #flash.on { box-shadow: inset 0 0 0 10px rgba(192,68,63,0.85); transition: none; }
 
@@ -96,6 +98,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <h1>Övningskörning</h1>
     <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
     <div id="lessons"></div>
+    <label class="row"><input type="checkbox" id="opt3d"> 3D: kör inifrån bilen (bäst med mobilen på tvären)</label>
     <label class="row"><input type="checkbox" id="optVoice"> Läraren pratar (uppläsning)</label>
     <label class="row"><input type="checkbox" id="optSound"> Ljud (blinkers, sirener)</label>
     <div class="keys" id="keysHelp">
@@ -116,7 +119,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <button id="brake" type="button">BROMS</button>
     <button id="gas" type="button">GAS</button>
   </div>
-  <button id="pause" type="button" aria-label="Paus">⏸</button>
+  <button id="pause" type="button" aria-label="Paus">II</button>
+  <button id="view" type="button" aria-label="Byt vy">3D</button>
   <div id="hud">
     <span class="blink" id="hudL">◀</span>
     <span id="speed">0</span><span id="kmh">km/h</span>
@@ -145,6 +149,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   </div>
 </div>
 
+<script src="three.min.js"></script>
+<script src="spel3d.js"></script>
 <script src="spel.js"></script>
 </body>
 </html>
