@@ -37,8 +37,9 @@
     camera = new T.PerspectiveCamera(70, 1, 0.05, 500);
     camera.rotation.order = "YXZ";
     scene.add(camera);
-    scene.add(new T.HemisphereLight(0xffffff, 0x6a8a50, 1.0));
-    var sun = new T.DirectionalLight(0xffffff, 0.8); sun.position.set(40, 80, 25); scene.add(sun);
+    scene.add(new T.HemisphereLight(0xeaf3ff, 0x6a8a50, 1.0));
+    var sun = new T.DirectionalLight(0xfff4e0, 0.85); sun.position.set(40, 80, 25); scene.add(sun);
+    buildSkyline();
     grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
     grass.rotation.x = -Math.PI / 2; scene.add(grass);
     groundCv = document.createElement("canvas"); groundCv.width = groundCv.height = GROUND_PX;
@@ -202,7 +203,9 @@
   function tree(x, y, r) {
     var g = new T.Group();
     g.add(mesh(new T.CylinderGeometry(0.15, 0.22, 1.6, 5), mat(0x6b4a2f), 0, 0.8, 0));
-    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(snowy ? 0x4a6650 : 0x3f6e30), 0, 1.4 + r * 0.8, 0);
+    if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
+    var sh = new T.Mesh(new T.CircleGeometry(r * 0.9, 8), shadowMat); sh.rotation.x = -Math.PI / 2; sh.position.set(0.4, 0.03, 0.4); g.add(sh);
+    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(snowy ? 0x4a6650 : (Math.random() < 0.5 ? 0x3f6e30 : 0x4d7a35)), 0, 1.4 + r * 0.8, 0);
     if (snowy) { var cap = mesh(new T.IcosahedronGeometry(r * 0.75, 0), mat(0xf2f5f7), 0, 1.4 + r * 1.35, 0); cap.scale.y = 0.6; g.add(cap); }
     top.scale.y = 1.25; g.add(top);
     return place(g, x, y, 0);
@@ -373,6 +376,8 @@
   // ---------- road users ----------
   function makeNpc(n) {
     var g = new T.Group(), col = n.color || "#286ee0";
+    if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
+    if (n.mode !== "train") g.add(shadow(n.hw * 2 + 0.3, n.hl * 2 + 0.3));
     if (n.kind === "ped" || n.kind === "child" || n.kind === "stroll") {
       var h = n.kind === "child" ? 1.15 : 1.7;
       g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
@@ -427,6 +432,8 @@
       } else {
         var body = n.kind === "amb" ? "#f0e040" : col;
         g.add(mesh(box(Wd, 0.75, L), mat(body), 0, 0.6, 0));
+        [-1, 1].forEach(function (sd) { g.add(mesh(box(0.34, 0.14, 0.05), mat(0xfff6d0, true), sd * (n.hw - 0.28), 0.72, -n.hl - 0.01)); });
+        g.add(mesh(box(Wd - 0.7, 0.12, 0.04), mat(0x1c1f23), 0, 0.5, -n.hl - 0.01));   // grille
         g.add(mesh(box(Wd - 0.15, 0.6, L * 0.5), mat(body), 0, 1.25, 0.15));
         g.add(mesh(box(Wd - 0.13, 0.42, L * 0.46), mat(0x303a4a), 0, 1.25, 0.15));
         [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (w) {
@@ -479,6 +486,55 @@
     Object.keys(npcMeshes).forEach(function (k) { if (!seen[k]) { scene.remove(npcMeshes[k]); delete npcMeshes[k]; } });
   }
 
+  // Sky dome with a soft gradient, a few low-poly clouds and a dark line of forest on the horizon.
+  // All three follow the car; they are drawn past the fog, so they keep their colour.
+  var skyDome, clouds, forest;
+  function buildSkyline() {
+    var geo = new T.SphereGeometry(420, 24, 12), col = [], pos = geo.attributes.position;
+    for (var i = 0; i < pos.count; i++) col.push(0, 0, 0);
+    geo.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+    skyDome = new T.Mesh(geo, new T.MeshBasicMaterial({ vertexColors: true, side: T.BackSide, fog: false, depthWrite: false }));
+    skyDome.renderOrder = -2; scene.add(skyDome);
+    clouds = new T.Group();
+    var r = Math.random, cm = new T.MeshLambertMaterial({ color: 0xffffff, fog: false, flatShading: true });
+    for (var c = 0; c < 14; c++) {
+      var cl = new T.Group(), a = r() * Math.PI * 2, dist = 160 + r() * 160;
+      for (var k = 0; k < 4; k++) {
+        var puff = new T.Mesh(new T.IcosahedronGeometry(8 + r() * 8, 0), cm);
+        puff.position.set(k * 9 - 13 + r() * 4, r() * 3, r() * 6); puff.scale.y = 0.5; cl.add(puff);
+      }
+      cl.position.set(Math.cos(a) * dist, 70 + r() * 40, Math.sin(a) * dist); cl.rotation.y = r() * 3;
+      clouds.add(cl);
+    }
+    scene.add(clouds);
+    forest = new T.Group();
+    var fm = new T.MeshBasicMaterial({ color: 0x5f7f6a, fog: false });
+    for (var t = 0; t < 140; t++) {
+      var ang = t / 140 * Math.PI * 2 + r() * 0.03, rad = 190 + r() * 25, h = 10 + r() * 14;
+      var tr = new T.Mesh(new T.ConeGeometry(4 + r() * 3, h, 5), fm);
+      tr.position.set(Math.cos(ang) * rad, h / 2 - 1, Math.sin(ang) * rad); forest.add(tr);
+    }
+    scene.add(forest);
+    paintSky(false);
+  }
+  function paintSky(snow) {
+    var geo = skyDome.geometry, pos = geo.attributes.position, col = geo.attributes.color;
+    var top = new T.Color(snow ? 0xb8c2ca : 0x5d97d6), mid = new T.Color(snow ? 0xd9dee2 : 0xa9cbea), low = new T.Color(snow ? 0xd9dee2 : 0xc4dbec), c = new T.Color();
+    for (var i = 0; i < pos.count; i++) {
+      var y = pos.getY(i) / 420;
+      if (y > 0.25) c.copy(mid).lerp(top, Math.min(1, (y - 0.25) / 0.6)); else c.copy(low).lerp(mid, Math.max(0, y / 0.25));
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+    clouds.visible = !snow;
+    forest.children[0].material.color.setHex(snow ? 0xaab4b8 : 0x5f7f6a);
+  }
+  function shadow(w, l) {
+    var m = new T.Mesh(new T.PlaneGeometry(w, l), shadowMat);
+    m.rotation.x = -Math.PI / 2; m.position.y = 0.03; return m;
+  }
+  var shadowMat = null;
+
   var snowy = false, flakes = null;
   function setWeather(w) {
     snowy = w === "snow";
@@ -486,6 +542,7 @@
     scene.background.setHex(sky); scene.fog.color.setHex(sky);
     scene.fog.near = snowy ? 25 : 55; scene.fog.far = snowy ? 95 : 135;
     grass.material = mat(snowy ? 0xe6ebee : 0x709c54);
+    paintSky(snowy);
     if (flakes) { scene.remove(flakes); flakes = null; }
     if (snowy) {
       var n = 1600, pos = new Float32Array(n * 3);
@@ -545,6 +602,8 @@
     updateLights(api);
     updateNpcs(api, G);
     grass.position.x = p.x; grass.position.z = p.y;
+    skyDome.position.set(p.x, 0, p.y); forest.position.set(p.x, 0, p.y);
+    clouds.position.set(p.x * 0.85, 0, p.y * 0.85); clouds.rotation.y += dt * 0.004;
     // Driver's eye: left of the centre of the car, a little behind its middle.
     camA += api.angDiff(p.a, camA) * Math.min(1, dt * 7);
     var rx = Math.cos(p.a), ry = Math.sin(p.a);

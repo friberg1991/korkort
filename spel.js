@@ -1136,6 +1136,21 @@
       if (b > a) ctx.fillRect(u - width / 2, -b, width, b - a);
     }
   }
+  // Faint speckles on the grass, like the situation pictures; one tile is 10 m.
+  var speckle = null;
+  function speckles(c2, x, y, w, h) {
+    if (!speckle) {
+      var cv2 = document.createElement("canvas"); cv2.width = cv2.height = 128;
+      var x2 = cv2.getContext("2d"), r = rng(7);
+      for (var i = 0; i < 260; i++) {
+        x2.fillStyle = r() < 0.5 ? "rgba(255,255,255,0.10)" : "rgba(0,40,0,0.10)";
+        x2.fillRect(Math.floor(r() * 128), Math.floor(r() * 128), 2, 2);
+      }
+      speckle = c2.createPattern(cv2, "repeat");
+      if (speckle.setTransform && window.DOMMatrix) speckle.setTransform(new DOMMatrix().scale(10 / 128));
+    }
+    c2.fillStyle = speckle; c2.fillRect(x, y, w, h);
+  }
   function framePiece(P) { ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(P.a); }
 
   function drawRoadGround(pc) {
@@ -1464,6 +1479,8 @@
     var c = G.cam;
     ctx.save();
     ctx.translate(W / 2, H * 0.66); ctx.rotate(-c.a); ctx.scale(c.sc, c.sc); ctx.translate(-c.x, -c.y);
+    var reach = Math.hypot(W, H) / c.sc;
+    speckles(ctx, c.x - reach, c.y - reach, reach * 2, reach * 2);
     drawPieces();
     drawBarriers();
     G.npcs.forEach(function (n) {
@@ -1502,6 +1519,7 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
     ctx.save(); ctx.translate(size / 2, size / 2); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
+    speckles(ctx, cx - size / sc / 2, cy - size / sc / 2, size / sc, size / sc);
     drawPieces();
     ctx.restore();
     ctx = saved;
@@ -1588,7 +1606,7 @@
     LESSONS.forEach(function (L, i) {
       var b = document.createElement("button"); b.type = "button"; b.className = "lesson";
       var best = store.best[L.id];
-      b.innerHTML = '<span class="num">' + (i + 1) + '</span><span class="txt"><span class="name"></span><br><span class="what"></span></span>' +
+      b.innerHTML = '<span class="num">' + (L.icon || i + 1) + '</span><span class="txt"><span class="name"></span><br><span class="what"></span></span>' +
         (best ? '<span class="mark ' + best + '">' + (best === "ok" ? "Godkänd" : "Övning kvar") + "</span>" : "");
       b.querySelector(".name").textContent = L.name; b.querySelector(".what").textContent = L.what;
       b.addEventListener("click", function () { startLesson(i); });
@@ -1682,7 +1700,7 @@
   }
 
   var LESSONS = [
-    { id: "stad", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
+    { id: "stad", icon: "🏙️", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 120, signs: [{ s: 8, speed: 50 }],
           say: [[0, "Hej! Pil upp gasar och pil ned bromsar. På mobilen har du knappar. Här i tätorten gäller 50 km/h."],
@@ -1699,7 +1717,7 @@
         { type: "junction", ctrl: "ljus", want: -1, good: "Bra vänstersväng!" },
         { type: "road", len: 130, finish: true, say: [[10, "Bra kört! Stanna här vid kanten."]] }
       ] },
-    { id: "land", name: "Landsväg", what: "Hastighet, avstånd, älg, omkörning och väjningsplikt",
+    { id: "land", icon: "🌲", name: "Landsväg", what: "Hastighet, avstånd, älg, omkörning och väjningsplikt",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 100, signs: [{ s: 8, speed: 50 }, { s: 92, code: "E6" }],
           say: [[0, "Nu kör vi ut på landsvägen. Håll 50 tills vi lämnar tätorten."]] },
@@ -1715,7 +1733,7 @@
           npcs: [{ from: "left", to: "straight" }, { from: "right", to: "straight", eta: 1.5 }] },
         { type: "road", len: 180, limit: 80, finish: true, signs: [{ s: 20, speed: 80 }], say: [[15, "Bra körning på landsvägen! Sakta in och stanna här framme."]] }
       ] },
-    { id: "rondell", name: "Cirkulationsplatser", what: "Väjningsplikt vid infart, välja avfart och blinka ut",
+    { id: "rondell", icon: "🔄", name: "Cirkulationsplatser", what: "Väjningsplikt vid infart, välja avfart och blinka ut",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 140, signs: [{ s: 8, speed: 50 }],
           say: [[2, "Nu övar vi cirkulationsplatser. Bilar som redan kör runt har företräde, för du har väjningsplikt när du kör in."],
@@ -1725,7 +1743,7 @@
         { type: "round", want: 3, good: "Bra! Tredje avfarten.", npcs: [{ from: "left", to: "right", eta: 1.3 }, { from: "fwd", to: "back", eta: 0.8 }] },
         { type: "road", len: 140, finish: true, say: [[10, "Bra jobbat! Stanna här vid kanten."]] }
       ] },
-    { id: "motorvag", name: "Motorväg", what: "Påfart, omkörning, kö och avfart", start: { s: 8, v: 50, d: 3.5 },
+    { id: "motorvag", icon: "🛣️", name: "Motorväg", what: "Påfart, omkörning, kö och avfart", start: { s: 8, v: 50, d: 3.5 },
       steps: [
         { type: "mv", env: "mv", limit: 110, len: 330, acc: 230, signs: [{ s: 4, code: "E1" }, { s: 140, speed: 110 }],
           ahead: [{ s: -60, v: 92 }, { s: 20, v: 92 }, { s: 95, v: 92 }, { s: 175, v: 92 }, { s: 255, v: 92 }],
@@ -1738,7 +1756,7 @@
         { type: "mv", len: 420, dec: [220, 410],
           say: [[20, "Vi tar nästa avfart. Byt till högra körfältet, och blinka höger in i avfartens körfält. Sakta in först där."]] }
       ] },
-    { id: "special", name: "Järnväg, utryckning och skola", what: "Bommar, ambulans, huvudled, barn och buss",
+    { id: "special", icon: "🚂", name: "Järnväg, utryckning och skola", what: "Bommar, ambulans, huvudled, barn och buss",
       steps: [
         { type: "road", env: "land", limit: 70, len: 270, signs: [{ s: 6, speed: 70 }, { s: 25, code: "A35" }, { s: 228, code: "A39" }], rail: { s: 240 },
           say: [[6, "Här gäller 70. Det kommer en järnvägskorsning med bommar. Blinkar de röda ljusen ska du stanna före bommen."]] },
@@ -1754,7 +1772,7 @@
           say: [[8, "Bussen vid hållplatsen kommer att blinka för att köra ut. Här är det högst 50, så då ska du släppa ut den."]] },
         { type: "road", len: 120, finish: true, say: [[10, "Stanna här vid kanten. Bra jobbat!"]] }
       ] },
-    { id: "vinter", name: "Vinterkörning", what: "Snö, halka, längre bromssträcka och cyklist", weather: "snow",
+    { id: "vinter", icon: "❄️", name: "Vinterkörning", what: "Snö, halka, längre bromssträcka och cyklist", weather: "snow",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 160, signs: [{ s: 8, speed: 50 }], ahead: [{ s: 70, v: 16, kind: "bike", color: "#2e86ab", ttl: 150 }],
           say: [[0, "Det har snöat och vägen är hal. Bromssträckan blir mycket längre, så kör mjukt och håll avstånd."],
@@ -1770,7 +1788,7 @@
         { type: "round", want: 2, good: "Bra, mjukt och lugnt.", npcs: [{ from: "left", to: "right" }] },
         { type: "road", len: 150, finish: true, say: [[10, "Bra vinterkörning! Bromsa försiktigt och stanna här."]] }
       ] },
-    { id: "fri", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
+    { id: "fri", icon: "🎲", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
   ];
 
   // Hooks for automated checks.
