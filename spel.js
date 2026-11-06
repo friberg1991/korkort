@@ -245,7 +245,8 @@
     this.id = nextId++; this.mode = "path"; this.kind = o.kind || "car"; this.s = o.s; this.d = o.d || 0; this.td = this.d;
     this.dir = o.dir || 1; this.v = o.v != null ? o.v : 0; this.vt = o.vt != null ? o.vt : this.v; this.color = o.color || pickColor();
     this.vtAt = o.vtAt || null; this.blink = 0; this.siren = this.kind === "amb"; this.parked = !!o.parked; this.ttl = o.ttl || 0;
-    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35] }[this.kind];
+    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35], police: [2.3, 0.92] }[this.kind];
+    this.yaw = o.yaw || 0; if (o.blink) this.blink = o.blink;
     this.hl = dims[0]; this.hw = dims[1];
   }
   function PolyCar(o) {
@@ -457,6 +458,7 @@
     }
     if (G.ambActive && pc.kind === "road") out.push(1.3);
     if (st.works && t > st.works.s - 60 && t < st.works.s + st.works.len + 10) out.push(-3.5);
+    if (st.accident && t > st.accident.s - 60 && t < st.accident.s + st.accident.len + 10) out.push(-3.5);
     if (st.park && t > st.park.zone[0] - 20) out.push(3.0);
     // Room to pass a cyclist: half a lane out to the left.
     if (pc.kind === "road" && G.npcs.some(function (n) { return n.kind === "bike" && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
@@ -490,7 +492,7 @@
       else if (n.mode === "train") updateTrain(n, dt);
       if (n.gone) G.npcs.splice(i, 1);
     }
-    G.ambActive = G.npcs.some(function (n) { return n.kind === "amb" && !n.passed; });
+    G.ambActive = G.npcs.some(function (n) { return n.kind === "amb" && !n.passed && !n.parked; });
     checkRules(dt);
     checkCrash();
     updateSay(dt);
@@ -650,8 +652,19 @@
   function crossed(x) { return G.prevS < x && G.p.s >= x; }
   function front() { return G.p.s + CAR.hl; }
 
+  // The limit that applies where the car is: from the last speed sign passed
+  // (tätort 50, outside 70, gångfart about 7), or the stretch's own limit before any sign.
+  var SIGN_LIMIT = { E5: 50, E6: 70, E9: 7, E10: 50 };
+  function limitAt(s) {
+    var best = null;
+    G.course.signs.forEach(function (sg) {
+      var v = sg.speed || SIGN_LIMIT[sg.code];
+      if (v && !sg.pos && sg.s <= s + CAR.hl && (!best || sg.s >= best.s)) best = { s: sg.s, v: v };
+    });
+    return best ? best.v : G.course.pieceAt(s).limit;
+  }
   function checkRules(dt) {
-    var p = G.p, pc = curPiece(), kmh = p.v * KMH, lim = pc.limit;
+    var p = G.p, pc = curPiece(), kmh = p.v * KMH, lim = G.limit = limitAt(p.s);
     // Passing a cyclist: keep well out to the side.
     G.npcs.forEach(function (n) {
       if (n.kind !== "bike" || n.passedBy) return;
@@ -681,7 +694,7 @@
     // Following distance.
     var ahead = null;
     G.npcs.forEach(function (n) {
-      if (n.mode === "path" && n.dir > 0 && Math.abs(n.d - p.d) < 1.6 && n.s > p.s) { if (!ahead || n.s < ahead.s) ahead = n; }
+      if (n.mode === "path" && n.dir > 0 && !n.parked && Math.abs(n.d - p.d) < 1.6 && n.s > p.s) { if (!ahead || n.s < ahead.s) ahead = n; }
     });
     if (ahead && p.v > 30 / KMH) {
       var gap = ahead.s - ahead.hl - p.s - CAR.hl;
@@ -787,6 +800,7 @@
   }
   function signRoad(pc, dt, t) {
     var st = pc.st, p = G.p;
+    events(pc, dt, t);
     // Omkörningsförbud: passing a motor vehicle inside the zone.
     if (st.noOvertake && t > st.noOvertake[0] && t < st.noOvertake[1]) {
       G.npcs.forEach(function (n) {
@@ -817,6 +831,70 @@
         var wk = new Walker({ kind: "stroll", s: pc.s0 + 20 + i * (pc.len - 40) / st.street, u: i % 2 ? -4.4 : 1.45, vs: (i % 3 ? 1 : -1) * 1.1 });
         wk.lo = pc.s0 + 6; wk.hi = pc.s0 + pc.len - 6; G.npcs.push(wk);
       }
+    }
+  }
+  function events(pc, dt, t) {
+    var st = pc.st, p = G.p, f = front();
+    if (!pc.evOn && t > -200) {
+      pc.evOn = true;
+      if (st.police) {
+        G.npcs.push(new PathCar({ s: pc.s0 + st.police.s + 14, d: 3.7, v: 0, kind: "police", parked: true }));
+        pc.officer = new Walker({ kind: "officer", s: pc.s0 + st.police.s, u: 2.4, vu: 0 }); G.npcs.push(pc.officer);
+        pc.pol = { state: "wait", t: 0 };
+      }
+      if (st.accident) {
+        var a0 = pc.s0 + st.accident.s;
+        G.npcs.push(new PathCar({ s: a0 + 8, d: 0.35, v: 0, parked: true, yaw: 0.45, blink: 2, color: "#5a4fcf" }));
+        G.npcs.push(new PathCar({ s: a0 + 14, d: 0.5, v: 0, parked: true, yaw: -0.35, blink: 2, color: COL.silver }));
+        G.npcs.push(new PathCar({ s: a0 + st.accident.len, d: 3.9, v: 0, parked: true, kind: "amb" }));
+        G.npcs.push(new Walker({ kind: "ped", s: a0 + 11, u: 2.9, vu: 0 }));
+      }
+      if (st.breakdown) {
+        pc.broken = new PathCar({ s: pc.s0 + st.breakdown.s, d: 3.0, v: 0, parked: true, blink: 2, color: COL.yellow });
+        G.npcs.push(pc.broken);
+        G.npcs.push(new Walker({ kind: "ped", s: pc.s0 + st.breakdown.s + 4, u: 6.5, vu: 0 }));
+      }
+    }
+    // Polisman's stop sign: arm raised. Police signals come before signs, signals and other rules.
+    if (st.police && pc.pol) {
+      var ps = pc.s0 + st.police.s, P = pc.pol;
+      P.t += dt;
+      if (P.state === "wait") {
+        if (f > ps - 24 && f < ps - 1 && p.stillT > 0.8) {
+          P.state = "talk"; P.t = 0;
+          say("Polisen: Hej! Det här är en nykterhetskontroll. Blås i den här, tack.", "", true);
+        } else if (f >= ps - 1) {
+          P.state = "done"; pc.officer.vu = 1.2;
+          fault("police:" + pc.index, "Du stannade inte för polisens stopptecken! Polisens tecken gäller före skyltar, signaler och andra regler.", true);
+        } else if (p.stillT > 1.5 && f < ps - 24 && !P.hint) { P.hint = true; say("Kör fram lite närmare polisen och stanna där."); }
+      } else if (P.state === "talk") {
+        if (P.t > 3.6 && !P.said) { P.said = true; say("Polisen: Tack, det var bra. Kör försiktigt!"); }
+        if (p.v > 1 && P.t < 5) fault("police:" + pc.index, "Vänta tills polisen säger att du får köra.", false);
+        if (P.t > 6) { P.state = "done"; pc.officer.vu = 1.2; praise("Bra! Du stannade direkt när polisen gav tecken."); }
+      }
+    }
+    // Trafiksäkerhetskamera.
+    if (st.camera && crossedFront(pc.s0 + st.camera.s)) {
+      var kmh = p.v * KMH, lim = G.limit || pc.limit;
+      if (kmh > lim + 3) fault("camera:" + pc.index, "Blixt! Kameran fotograferade dig i " + Math.round(kmh) + " km/h där det är " + lim + ".", kmh > lim + 10);
+      else praise("Bra fart förbi kameran.");
+    }
+    // Olycka: the cars stand in our lane, so oncoming traffic goes first.
+    if (st.accident) {
+      var w0 = pc.s0 + st.accident.s, w1 = w0 + st.accident.len;
+      if (crossedFront(w0 - 2) && G.npcs.some(function (n) { return n.mode === "path" && n.dir < 0 && n.s > w0 - 5 && n.s < w1 + 40; }))
+        fault("accident:" + pc.index, "Hindret står i ditt körfält, så du ska låta mötande passera först.", true);
+    }
+    // A car stopped on the verge: pass with room to spare.
+    if (pc.broken && !pc.brokenDone && G.prevS < pc.broken.s && p.s >= pc.broken.s) {
+      pc.brokenDone = true;
+      if (p.d > 0.3 && p.v * KMH > 40) fault("verge:" + pc.index, "Ge mer plats och sakta in när du kör förbi en bil på vägrenen.", false);
+      else praise("Bra, du gav bilen på vägrenen plats.");
+    }
+    // Someone crossing where there is no zebra crossing.
+    if (st.jaywalk && !pc.jayOn && t >= st.jaywalk.s - 26) {
+      pc.jayOn = true;
+      G.npcs.push(new Walker({ kind: "ped", s: pc.s0 + st.jaywalk.s, u: 4.0, vu: -1.4, color: "#6a4c93" }));
     }
   }
   // A car ahead that brakes hard at one spot, then drives on.
@@ -1084,11 +1162,11 @@
     if (n.mode === "path") {
       var q = G.course.poseAt(n.s);
       var x = q.x + Math.cos(q.a) * n.d, y = q.y + Math.sin(q.a) * n.d;
-      return { x: x, y: y, a: q.a + (n.dir < 0 ? Math.PI : 0) };
+      return { x: x, y: y, a: q.a + (n.dir < 0 ? Math.PI : 0) + (n.yaw || 0) };
     }
     if (n.mode === "poly" || n.mode === "train") return n.poly.at(n.t);
     var w = G.course.poseAt(n.s);
-    var wa = n.kind === "stroll" ? w.a + (n.vs < 0 ? Math.PI : 0) : w.a + (n.vu < 0 ? -Math.PI / 2 : Math.PI / 2);
+    var wa = n.kind === "officer" ? w.a + Math.PI : n.kind === "stroll" ? w.a + (n.vs < 0 ? Math.PI : 0) : w.a + (n.vu < 0 ? -Math.PI / 2 : Math.PI / 2);
     return { x: w.x + Math.cos(w.a) * n.u, y: w.y + Math.sin(w.a) * n.u, a: wa };
   }
   function updatePolyCar(n, dt) {
@@ -1121,7 +1199,8 @@
       }
     }
     if (n.u < -14 || n.u > 18) n.gone = true;
-    if (n.kind === "ped" && (n.vu < 0 ? n.u < -8.2 : n.u > 3.8)) { n.done = true; n.gone = true; }
+    if (n.kind === "ped" && n.vu && (n.vu < 0 ? n.u < -8.2 : n.u > 3.8)) { n.done = true; n.gone = true; }
+    if (n.kind === "officer" && n.u > 4.6) n.vu = 0;
     if (n.s < p.s - 120) n.gone = true;
   }
   function updateTrain(n, dt) { n.t += n.v * dt; if (n.t > n.poly.len + 80) { n.gone = true; } }
@@ -1153,7 +1232,7 @@
         continue;
       }
       if (overlap(me, boxOf(n, npcPose(n)))) {
-        var what = { ped: "en gående", stroll: "en gående", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
+        var what = { ped: "en gående", stroll: "en gående", officer: "polisen", police: "polisbilen", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
@@ -1306,6 +1385,14 @@
       for (var cw = ws; cw <= ws + wl; cw += 4) { ctx.beginPath(); ctx.arc(-1.45, -cw, 0.3, 0, Math.PI * 2); ctx.fill(); }
       for (var k = 0; k < 6; k++) { ctx.fillStyle = k % 2 ? "#111" : COL.yellow; ctx.fillRect(-1.6 + k * 0.55, -ws + 0.2, 0.55, 0.4); }
     }
+    (st.props || []).concat(st.camera ? [{ s: st.camera.s, u: 4.6, kind: "camera" }] : []).forEach(function (pr) {
+      if (pr.kind === "triangle") {
+        ctx.fillStyle = COL.red; ctx.beginPath(); ctx.moveTo(pr.u, -pr.s - 0.45); ctx.lineTo(pr.u + 0.4, -pr.s + 0.25); ctx.lineTo(pr.u - 0.4, -pr.s + 0.25); ctx.closePath(); ctx.fill();
+      } else if (pr.kind === "camera") {
+        ctx.fillStyle = "#55595e"; ctx.fillRect(pr.u - 0.25, -pr.s - 0.25, 0.5, 0.5);
+        ctx.fillStyle = "#c9c9c4"; ctx.fillRect(pr.u - 0.35, -pr.s - 0.6, 0.7, 0.45);
+      }
+    });
     if (st.park) {
       ctx.fillStyle = COL.paint;
       for (var pz = st.park.zone[0]; pz <= st.park.zone[1]; pz += 6) ctx.fillRect(1.75, -pz - 0.06, 2.5, 0.12);
@@ -1417,24 +1504,27 @@
       ctx.fillStyle = COL.glass; ctx.fillRect(-hw + 0.5, 0, hw * 2 - 1, 1.2);
       if (Math.floor(G.t * 2) % 2) { disc(COL.orange, 0, 0.6, 0.25); }
     } else {
-      var body = kind === "amb" ? "#f0e040" : n.color;
+      var body = kind === "amb" ? "#f0e040" : kind === "police" ? "#f2f4f6" : n.color;
       ctx.fillStyle = body; rr(-hw, -hl, hw * 2, hl * 2, 0.6); ctx.fill();
+      if (kind === "police") { ctx.fillStyle = "#1d4fa8"; ctx.fillRect(-hw, -0.4, hw * 2, 0.5); ctx.fillStyle = COL.yellow; ctx.fillRect(-hw, 0.1, hw * 2, 0.25); }
       if (kind === "amb") { ctx.fillStyle = "#2e9660"; for (var k = -hl + 0.6; k < hl - 0.4; k += 0.8) ctx.fillRect(((k * 10) % 2 ? -hw : hw - 0.35), k, 0.35, 0.4); }
       ctx.fillStyle = COL.glass;
       ctx.fillRect(-hw + 0.2, -hl * 0.48, hw * 2 - 0.4, 0.75);
       ctx.fillRect(-hw + 0.25, hl * 0.42, hw * 2 - 0.5, 0.55);
       ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.fillRect(-hw + 0.3, -hl * 0.2, hw * 2 - 0.6, hl * 0.6);
       ctx.fillStyle = "#fff6d0"; ctx.fillRect(-hw + 0.15, -hl, 0.4, 0.2); ctx.fillRect(hw - 0.55, -hl, 0.4, 0.2);
-      if (kind === "amb") {
+      if (kind === "amb" || kind === "police") {
         var on = Math.floor(G.t * 6) % 2;
         disc(on ? "#4aa0ff" : "#1a3a7a", -0.4, -0.3, 0.32); disc(on ? "#1a3a7a" : "#4aa0ff", 0.4, -0.3, 0.32);
         if (on) disc("rgba(74,160,255,0.25)", 0, -0.3, 2.2);
       }
     }
     if (n.blink && Math.floor(G.t * 2.6) % 2) {
-      var x = n.blink > 0 ? hw - 0.1 : -hw + 0.1;
-      disc(COL.orange, x, -hl + 0.25, 0.32); disc(COL.orange, x, hl - 0.25, 0.32);
-      disc("rgba(255,166,30,0.3)", x, -hl + 0.25, 0.8);
+      (n.blink === 2 ? [-1, 1] : [n.blink]).forEach(function (sd) {   // 2: hazard lights, both sides
+        var x = sd > 0 ? hw - 0.1 : -hw + 0.1;
+        disc(COL.orange, x, -hl + 0.25, 0.32); disc(COL.orange, x, hl - 0.25, 0.32);
+        disc("rgba(255,166,30,0.3)", x, -hl + 0.25, 0.8);
+      });
     }
     ctx.restore();
   }
@@ -1445,6 +1535,11 @@
       ctx.fillStyle = "#5b3a22"; ctx.beginPath(); ctx.ellipse(0, 0.2, 0.55, 1.3, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#4a2e1a"; ctx.beginPath(); ctx.ellipse(0, -1.45, 0.3, 0.5, 0, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = "#c8b48a"; ctx.lineWidth = 0.18; ctx.beginPath(); ctx.moveTo(-0.9, -1.4); ctx.lineTo(0.9, -1.4); ctx.stroke();
+    } else if (n.kind === "officer") {
+      ctx.fillStyle = "#1d2a4a"; ctx.beginPath(); ctx.ellipse(0, 0, 0.34, 0.22, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#d8f02c"; ctx.fillRect(-0.3, -0.08, 0.6, 0.16);
+      disc("#1d2a4a", 0, 0, 0.15);
+      ctx.fillStyle = "#e8c39e"; ctx.fillRect(0.28, -0.05, 0.35, 0.1);   // arm raised: stop
     } else {
       var sc = n.kind === "child" ? 0.75 : 1, sw = Math.sin(G.t * 9) * 0.25 * sc;
       ctx.fillStyle = "#333"; ctx.fillRect(-0.22 * sc, sw - 0.1, 0.14 * sc, 0.3); ctx.fillRect(0.08 * sc, -sw - 0.1, 0.14 * sc, 0.3);
@@ -1594,8 +1689,9 @@
     pc = pc || curPiece();
     var kmh = Math.round(G.p.v * KMH);
     hud.speed.textContent = kmh;
-    hud.speed.className = kmh > pc.limit + 3 ? "over" : "";
-    hud.limit.textContent = pc.limit;
+    var lim = G.limit || pc.limit;
+    hud.speed.className = kmh > lim + 3 ? "over" : "";
+    hud.limit.textContent = lim;
     var on = Math.floor(G.t * 2.6) % 2 === 0;
     hud.l.className = "blink" + (G.p.blink < 0 && on ? " on" : "");
     hud.r.className = "blink" + (G.p.blink > 0 && on ? " on" : "");
@@ -1737,7 +1833,13 @@
         else if (extra < 0.45) { road.ahead = [{ s: 45, v: 17, kind: "bike", ttl: road.len - 12 }]; road.say.push([6, "Cyklist framför. Kör om först när det är fritt, och håll avstånd i sidled."]); }
         else if (extra < 0.6) { road.bus = { s: 70 }; road.signs = [{ s: 60, code: "E22" }]; }
         else if (extra < 0.72) { road.bumps = [60]; road.signs = [{ s: 30, code: "A9" }]; road.say.push([20, "Farthinder framåt, sakta in."]); }
-      } else if (extra < 0.4) { road.ahead = [{ s: 70, v: 60, brakeAt: 110 }]; road.say.push([8, "Håll avstånd till bilen framför."]); }
+        else if (extra < 0.82) { road.camera = { s: 90 }; road.signs = [{ s: 20, code: "E24" }]; }
+        else if (extra < 0.9) { road.jaywalk = { s: 70 }; }
+      } else if (extra < 0.3) { road.ahead = [{ s: 70, v: 60, brakeAt: 110 }]; road.say.push([8, "Håll avstånd till bilen framför."]); }
+      else if (extra < 0.5) { road.len = 220; road.police = { s: 150 }; road.say.push([70, "Polisen ger stopptecken där framme. Stanna vid polisen."]); }
+      else if (extra < 0.65) { road.len = 240; road.lanes = [0, -3.5]; road.accident = { s: 150, len: 22 }; road.props = [{ s: 100, u: 1.0, kind: "triangle" }]; road.oncoming = [20];
+        road.say.push([60, "Varningstriangel! En olycka framför. Sakta in och låt mötande passera först."]); }
+      else if (extra < 0.75) { road.camera = { s: 100 }; road.signs = [{ s: 20, code: "E24" }]; }
       var round = Math.random() < 0.3;
       var want;
       if (round) {
@@ -1887,6 +1989,20 @@
           say: [[10, "Varning för vägarbete. Tillfälligt 50 km/h."],
                 [80, "Vägarbetet stänger vårt körfält. Skylten med den röda pilen betyder att vi har väjningsplikt mot mötande. Vänta, kör sedan förbi på vänster sida och tillbaka."]] },
         { type: "road", len: 150, limit: 70, finish: true, say: [[10, "Bra kört genom vägarbetet! Stanna här vid kanten."]] }
+      ] },
+    { id: "polis", icon: "👮", name: "Polis och oväntade händelser", what: "Fartkamera, poliskontroll, olycka, bil på vägrenen och fotgängare utan övergångsställe",
+      steps: [
+        { type: "road", env: "stad", limit: 50, len: 230, signs: [{ s: 8, speed: 50 }, { s: 40, code: "E24" }], camera: { s: 160 }, jaywalk: { s: 100 },
+          say: [[0, "Nu kör vi en tur där det kan hända saker. Var uppmärksam hela tiden!"],
+                [42, "Den blå skylten med kameran betyder automatisk trafikövervakning. Håll hastigheten."]] },
+        { type: "road", env: "land", limit: 70, len: 320, signs: [{ s: 4, code: "E6" }, { s: 10, speed: 70 }], police: { s: 220 },
+          say: [[120, "Där framme står en polis med uppsträckt arm. Det är ett stopptecken: stanna vid polisen."]] },
+        { type: "road", len: 340, lanes: [0, -3.5], accident: { s: 210, len: 22 }, props: [{ s: 150, u: 1.0, kind: "triangle" }], oncoming: [40],
+          say: [[100, "Varningsblinkers och varningstriangel! Det har hänt en olycka. Sakta in och var beredd att stanna."],
+                [175, "Bilarna står i vårt körfält. Låt mötande passera först, kör sedan förbi lugnt på vänster sida."]] },
+        { type: "road", len: 260, breakdown: { s: 170 }, props: [{ s: 120, u: 2.6, kind: "triangle" }],
+          say: [[70, "En bil har fått motorstopp på vägrenen. Sakta in och ge den gott om plats."]] },
+        { type: "road", len: 150, finish: true, say: [[10, "Det var en händelserik tur! Stanna här vid kanten."]] }
       ] },
     { id: "fri", icon: "🎲", name: "Fri körning", what: "En ny slumpad runda varje gång, som ett uppkörningsprov", make: makeFree, steps: [] }
   ];

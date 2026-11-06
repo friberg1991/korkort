@@ -271,6 +271,18 @@
         });
       }
     }
+    (st.props || []).concat(st.camera ? [{ s: st.camera.s, u: 4.6, kind: "camera" }] : []).forEach(function (pr) {
+      var qp = at(pr.u, pr.s), o = new T.Group();
+      if (pr.kind === "triangle") {
+        var tri = new T.Mesh(new T.CircleGeometry(0.42, 3), mat(0xe03832)); tri.rotation.z = Math.PI / 2; tri.position.y = 0.4; o.add(tri);
+        var inner = new T.Mesh(new T.CircleGeometry(0.24, 3), mat(0xf2f2f2)); inner.rotation.z = Math.PI / 2; inner.position.set(0, 0.4, 0.01); o.add(inner);
+      } else {
+        o.add(mesh(cyl(0.08, 0.1, 3.2, 6), mat(0x55595e), 0, 1.6, 0));
+        o.add(mesh(box(0.55, 0.5, 0.7), mat(0xc9c9c4), 0, 3.3, 0));
+        o.add(mesh(box(0.25, 0.25, 0.05), mat(0x15181c), 0, 3.3, 0.36));
+      }
+      place(o, qp.x, qp.y, pc.P.a);
+    });
     if (st.works) {
       for (var cw = st.works.s; cw <= st.works.s + st.works.len; cw += 4) {
         var qc = at(-1.45, cw), cone = new T.Group();
@@ -395,7 +407,14 @@
     var g = new T.Group(), col = n.color || "#286ee0";
     if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
     if (n.mode !== "train") g.add(shadow(n.hw * 2 + 0.3, n.hl * 2 + 0.3));
-    if (n.kind === "ped" || n.kind === "child" || n.kind === "stroll") {
+    if (n.kind === "officer") {
+      g.add(mesh(box(0.42, 0.75, 0.26), mat(0xd8f02c), 0, 1.15, 0));            // reflective vest
+      g.add(mesh(box(0.36, 0.78, 0.22), mat(0x1d2a4a), 0, 0.4, 0));
+      g.add(mesh(new T.IcosahedronGeometry(0.15, 0), mat(0xe8c39e), 0, 1.68, 0));
+      g.add(mesh(box(0.3, 0.1, 0.3), mat(0x1d2a4a), 0, 1.82, 0));               // cap
+      var arm = mesh(box(0.1, 0.65, 0.1), mat(0xd8f02c), 0.27, 1.75, 0); g.add(arm);   // arm raised: stop
+      g.userData.arm = arm;
+    } else if (n.kind === "ped" || n.kind === "child" || n.kind === "stroll") {
       var h = n.kind === "child" ? 1.15 : 1.7;
       g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
       g.add(mesh(box(0.28, h * 0.45, 0.2), mat(0x333840), 0, h * 0.22, 0));
@@ -447,7 +466,7 @@
           wh.rotation.z = Math.PI / 2; g.add(wh);
         });
       } else {
-        var body = n.kind === "amb" ? "#f0e040" : col;
+        var body = n.kind === "amb" ? "#f0e040" : n.kind === "police" ? "#f2f4f6" : col;
         g.add(mesh(box(Wd, 0.75, L), mat(body), 0, 0.6, 0));
         [-1, 1].forEach(function (sd) { g.add(mesh(box(0.34, 0.14, 0.05), mat(0xfff6d0, true), sd * (n.hw - 0.28), 0.72, -n.hl - 0.01)); });
         g.add(mesh(box(Wd - 0.7, 0.12, 0.04), mat(0x1c1f23), 0, 0.5, -n.hl - 0.01));   // grille
@@ -459,7 +478,11 @@
         });
         g.userData.brake = new T.MeshBasicMaterial({ color: 0x7a2018 });
         g.add(mesh(box(Wd - 0.3, 0.12, 0.05), g.userData.brake, 0, 0.75, n.hl + 0.01));   // rear lights, bright when braking
-        if (n.kind === "amb") {
+        if (n.kind === "police") {
+          g.add(mesh(box(Wd + 0.02, 0.22, L - 0.6), mat(0x1d4fa8), 0, 0.68, 0));
+          g.add(mesh(box(Wd + 0.02, 0.1, L - 0.6), mat(0xf8c628), 0, 0.84, 0));
+        }
+        if (n.kind === "amb" || n.kind === "police") {
           g.userData.siren = [mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), -0.35, 1.65, -0.3),
                               mesh(box(0.35, 0.18, 0.25), new T.MeshBasicMaterial({ color: 0x4aa0ff }), 0.35, 1.65, -0.3)];
           g.userData.siren.forEach(function (o) { g.add(o); });
@@ -482,7 +505,8 @@
       seen[n.id] = true;
       var pose = n.mode === "train" ? n.poly.at(n.t) : api.npcPose(n);
       g.position.x = pose.x; g.position.z = pose.y; g.rotation.y = -pose.a;
-      if (n.mode === "walk" && n.kind !== "moose") g.position.y = Math.abs(Math.sin(G.t * 9)) * 0.05;
+      if (g.userData.arm) g.userData.arm.position.y = n.vu ? 1.1 : 1.75;
+      if (n.mode === "walk" && n.kind !== "moose" && (n.vu || n.vs)) g.position.y = Math.abs(Math.sin(G.t * 9)) * 0.05;
       if (g.userData.brake) {
         var dv = (g.userData.lastV != null ? g.userData.lastV - n.v : 0);
         g.userData.lastV = n.v;
@@ -491,7 +515,7 @@
       }
       if (g.userData.blink) {
         var on = Math.floor(G.t * 2.6) % 2 === 1;
-        g.userData.blink[0].color.setHex(n.blink < 0 && on ? 0xffa61e : 0x4a3a20);
+        g.userData.blink[0].color.setHex((n.blink < 0 || n.blink === 2) && on ? 0xffa61e : 0x4a3a20);
         g.userData.blink[1].color.setHex(n.blink > 0 && on ? 0xffa61e : 0x4a3a20);
       }
       if (g.userData.siren) {
@@ -642,7 +666,7 @@
     wheel.rotation.z = wheelA;
     stalk.rotation.z = -p.blink * 0.25;
     var pc = G.course.pieceAt(p.s);
-    drawCluster(Math.round(p.v * 3.6), pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0);
+    drawCluster(Math.round(p.v * 3.6), G.limit || pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0);
     renderMirrors(p, camA);
     renderer.render(scene, camera);
   }
