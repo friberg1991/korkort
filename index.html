@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1217">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Körkort">
+<meta name="description" content="Övningsfrågor för B-körkortets teoriprov. Fungerar utan internet.">
+<title>Emils Körkort</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="title">
+    <span class="brand">Körkort</span>
+    <span id="chapter" class="chapter"></span>
+  </div>
+  <button id="speak" class="icon-btn" type="button" aria-label="Läs upp" hidden>🔊</button>
+  <button id="menuBtn" class="icon-btn" type="button" aria-label="Meny">☰</button>
+  <div class="bar"><div id="fill"></div></div>
+</header>
+
+<main id="card">
+  <img id="pic" alt="" hidden>
+  <h1 id="question"></h1>
+  <div id="answers"></div>
+  <section id="explain" hidden>
+    <p id="result"></p>
+    <p id="why"></p>
+  </section>
+</main>
+
+<footer class="bottom">
+  <div id="stats"></div>
+  <button id="next" class="primary" type="button" hidden>Nästa fråga</button>
+</footer>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="panel" role="dialog" aria-label="Meny">
+    <h2>Kapitel</h2>
+    <div id="chapters"></div>
+    <h2>Inställningar</h2>
+    <label class="row"><input type="checkbox" id="optSound"> Ljud vid svar</label>
+    <label class="row" id="ttsRow"><input type="checkbox" id="optTts"> Läs upp automatiskt</label>
+    <button id="reset" class="ghost" type="button">Nollställ mina svar</button>
+    <p class="note">Fungerar utan internet när den är sparad på hemskärmen. Det du svarar sparas bara i den här mobilen.</p>
+    <button id="close" class="primary wide" type="button">Klar</button>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
