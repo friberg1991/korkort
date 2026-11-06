@@ -561,7 +561,7 @@
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
     var rate = dt > 0 ? api.angDiff(p.a, prevA) / dt : 0; prevA = p.a;
-    var want = Math.max(-2.6, Math.min(2.6, -rate * 2.2));
+    var want = G.manual ? -p.steer * 7 : Math.max(-2.6, Math.min(2.6, -rate * 2.2));
     wheelA += (want - wheelA) * Math.min(1, dt * 6);
     wheel.rotation.z = wheelA;
     stalk.rotation.z = -p.blink * 0.25;

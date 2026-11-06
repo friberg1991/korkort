@@ -86,6 +86,9 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 #pad button.down { background: rgba(12,210,157,0.35); }
 #bl { left: 12px; bottom: 0; width: 64px; height: 64px; font-size: 26px; }
 #br { left: 84px; bottom: 0; width: 64px; height: 64px; font-size: 26px; }
+#kl { left: 12px; bottom: 74px; width: 64px; height: 40px; font-size: 20px; }
+#kr { left: 84px; bottom: 74px; width: 64px; height: 40px; font-size: 20px; }
+#pad.auto #kl, #pad.auto #kr { display: none; }
 #gas { right: 12px; bottom: 0; width: 76px; height: 120px; font-size: 15px; }
 #brake { right: 98px; bottom: 0; width: 84px; height: 76px; font-size: 15px; }
 #pad .on { color: #ffa61e; border-color: #ffa61e; }
@@ -100,13 +103,15 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
     <div id="lessons"></div>
     <label class="row"><input type="checkbox" id="opt3d"> 3D: kör inifrån bilen (bäst med mobilen på tvären)</label>
+    <label class="row">Styrning <select id="optSteer"><option value="manual">Jag styr själv</option><option value="auto">Bilen följer vägen</option></select></label>
     <label class="row">Trafik <select id="optTraffic"><option value="0">Som vanligt</option><option value="1">Mer</option><option value="2">Mycket</option></select></label>
     <label class="row">Fotgängare <select id="optWalkers"><option value="0">Som vanligt</option><option value="1">Fler</option><option value="2">Många</option></select></label>
     <label class="row"><input type="checkbox" id="optVoice"> Läraren pratar (uppläsning)</label>
     <label class="row"><input type="checkbox" id="optSound"> Ljud (blinkers, sirener)</label>
     <div class="keys" id="keysHelp">
-      Tangentbord: <b>↑</b> gasa, <b>↓</b> bromsa, <b>←</b> / <b>→</b> blinka (blinkers styr svängar och filbyten), <b>Esc</b> paus.<br>
-      Mobil: knapparna på skärmen. Blinka åt det håll du ska svänga, så svänger bilen i korsningen.
+      Tangentbord: <b>↑</b> gasa, <b>↓</b> bromsa, <b>←</b> / <b>→</b> styr, <b>Q</b> / <b>E</b> blinkar, <b>Esc</b> paus.
+      Med "Bilen följer vägen" blinkar pilarna i stället, och bilen svänger dit du blinkar.<br>
+      Mobil: knapparna på skärmen. Stora pilar styr, små pilar blinkar.
     </div>
     <a class="btn" href="./">Tillbaka till frågorna</a>
   </div>
@@ -119,6 +124,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   <div id="pad">
     <button id="bl" type="button" aria-label="Blinka vänster">◀</button>
     <button id="br" type="button" aria-label="Blinka höger">▶</button>
+    <button id="kl" type="button" aria-label="Blinka vänster">⇦</button>
+    <button id="kr" type="button" aria-label="Blinka höger">⇨</button>
     <button id="brake" type="button">BROMS</button>
     <button id="gas" type="button">GAS</button>
   </div>

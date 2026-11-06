@@ -260,7 +260,8 @@
   var cv = document.getElementById("cv"), ctx = cv.getContext("2d");
   var W = 0, H = 0, DPR = 1;
   var G = null;                 // the running lesson
-  var keys = { gas: false, brake: false };
+  var keys = { gas: false, brake: false, left: false, right: false };
+  var touchUI = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
   var store = loadStore();
 
   function loadStore() {
@@ -286,11 +287,17 @@
       cam: { x: 0, y: 0, a: 0, sc: 12 }, crashed: false, finishT: -1
     };
     G.grip = L.weather === "snow" ? 0.45 : 1;
+    G.manual = store.steer !== "auto";
+    document.getElementById("pad").classList.toggle("auto", !G.manual);
+    G.p.steer = 0;
     G.course = new Course(L.make ? L.make() : L.steps, G);
     G.course.build();
     G.prevS = G.p.s;
     var pose = G.course.poseAt(G.p.s);
     G.cam.x = pose.x; G.cam.y = pose.y; G.cam.a = pose.a;
+    G.p.a = pose.a; G.p.x = pose.x + Math.cos(pose.a) * G.p.d; G.p.y = pose.y + Math.sin(pose.a) * G.p.d;
+    if (G.manual) say(touchUI ? "Du styr själv med pilknapparna. Blinka med de små knapparna ovanför dem." :
+      "Du styr själv med vänster- och högerpil. Blinka med Q och E.");
     show("game");
     ensureAudio();
     lastFrame = performance.now();
@@ -373,8 +380,10 @@
     var k = e.key;
     if (k === "ArrowUp" || k === "w" || k === "W") keys.gas = true;
     else if (k === "ArrowDown" || k === "s" || k === "S" || k === " ") keys.brake = true;
-    else if ((k === "ArrowLeft" || k === "a" || k === "A") && !e.repeat) setBlink(-1);
-    else if ((k === "ArrowRight" || k === "d" || k === "D") && !e.repeat) setBlink(1);
+    else if (k === "ArrowLeft" || k === "a" || k === "A") { if (G.manual) keys.left = true; else if (!e.repeat) setBlink(-1); }
+    else if (k === "ArrowRight" || k === "d" || k === "D") { if (G.manual) keys.right = true; else if (!e.repeat) setBlink(1); }
+    else if ((k === "q" || k === "Q") && !e.repeat) setBlink(-1);
+    else if ((k === "e" || k === "E") && !e.repeat) setBlink(1);
     else if (k === "Escape" || k === "p" || k === "P") pause();
     else return;
     e.preventDefault();
@@ -383,6 +392,8 @@
     var k = e.key;
     if (k === "ArrowUp" || k === "w" || k === "W") keys.gas = false;
     if (k === "ArrowDown" || k === "s" || k === "S" || k === " ") keys.brake = false;
+    if (k === "ArrowLeft" || k === "a" || k === "A") keys.left = false;
+    if (k === "ArrowRight" || k === "d" || k === "D") keys.right = false;
   });
   function hold(id, key) {
     var b = document.getElementById(id);
@@ -393,9 +404,16 @@
     b.addEventListener("contextmenu", function (e) { e.preventDefault(); });
   }
   hold("gas", "gas"); hold("brake", "brake");
-  document.getElementById("bl").addEventListener("pointerdown", function (e) { e.preventDefault(); setBlink(-1); });
-  document.getElementById("br").addEventListener("pointerdown", function (e) { e.preventDefault(); setBlink(1); });
-  window.addEventListener("blur", function () { keys.gas = keys.brake = false; });
+  // The arrow buttons blink when the car follows the road, and steer when he steers himself.
+  [["bl", "left", -1], ["br", "right", 1]].forEach(function (b) {
+    var el = document.getElementById(b[0]);
+    el.addEventListener("pointerdown", function (e) { e.preventDefault(); if (G && G.manual) { keys[b[1]] = true; el.classList.add("down"); } else setBlink(b[2]); });
+    var up = function (e) { e.preventDefault(); keys[b[1]] = false; el.classList.remove("down"); };
+    el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); el.addEventListener("pointerleave", up);
+  });
+  document.getElementById("kl").addEventListener("pointerdown", function (e) { e.preventDefault(); setBlink(-1); });
+  document.getElementById("kr").addEventListener("pointerdown", function (e) { e.preventDefault(); setBlink(1); });
+  window.addEventListener("blur", function () { keys.gas = keys.brake = keys.left = keys.right = false; });
 
   // ---------- sound ----------
   var AC = null, sirenOsc = null, sirenGain = null;
@@ -446,6 +464,33 @@
     else if (keys.gas) a = (3.4 * (1 - p.v / 48) + 0.3) * (0.55 + 0.45 * G.grip);
     else a = -0.3 - p.v * 0.006;
     p.v = Math.max(0, p.v + a * dt);
+    if (G.manual) moveManual(dt);
+    else moveOnPath(dt);
+    p.stillT = p.v < 0.3 ? p.stillT + dt : 0;
+
+    // Pieces near the car: spawning, signals and rule checks.
+    course.pieces.forEach(function (pc) {
+      if (pc.s0 - p.s < 260 && p.s - (pc.s0 + (pc.len || 0)) < 120) updatePiece(pc, dt);
+    });
+    course.feats.forEach(function (f) { if (Math.abs(f.s - p.s) < 300) updateFeat(f, dt); });
+    // Other road users.
+    for (var i = G.npcs.length - 1; i >= 0; i--) {
+      var n = G.npcs[i];
+      if (n.mode === "path") updatePathCar(n, dt);
+      else if (n.mode === "poly") updatePolyCar(n, dt);
+      else if (n.mode === "walk") updateWalker(n, dt);
+      else if (n.mode === "train") updateTrain(n, dt);
+      if (n.gone) G.npcs.splice(i, 1);
+    }
+    G.ambActive = G.npcs.some(function (n) { return n.kind === "amb" && !n.passed; });
+    checkRules(dt);
+    checkCrash();
+    updateSay(dt);
+  }
+
+  // The car follows the course; the blinker picks lanes and turns.
+  function moveOnPath(dt) {
+    var p = G.p, course = G.course;
     // Lane changes follow the blinker after a short while, away from junctions.
     var lanes = allowedLanes();
     var nearJunction = course.pending && course.pending.s0 - p.s < 80 && course.pending.kind === "junction";
@@ -470,7 +515,7 @@
       if (Math.abs(p.td - p.d) < 0.01) { p.d = p.td; if (p.laneT < 0) { p.blink = 0; p.laneT = 0; } }
     }
     // Motorway: the acceleration lane ends.
-    var pc0 = curPiece();
+    var pc0 = curPiece(), p0 = p;
     if (pc0.kind === "mv" && pc0.st.acc && p.d > 1 && p.s - pc0.s0 > pc0.st.acc + 25) {
       p.s = pc0.s0 + pc0.st.acc + 25; p.v = 0; G.stuck = true;
       fault("accel", "Accelerationsfältet tog slut! Du måste in på motorvägen innan det tar slut.", true);
@@ -485,26 +530,112 @@
     p.x = pose.x + r.x * p.d; p.y = pose.y + r.y * p.d;
     var yaw = moving && p.v > 0.5 ? Math.atan2(p.td > p.d ? 1 : -1, 6) * 0.6 : 0;
     p.a = pose.a + yaw;
-    p.stillT = p.v < 0.3 ? p.stillT + dt : 0;
+  }
 
-    // Pieces near the car: spawning, signals and rule checks.
-    course.pieces.forEach(function (pc) {
-      if (pc.s0 - p.s < 260 && p.s - (pc.s0 + (pc.len || 0)) < 120) updatePiece(pc, dt);
-    });
-    course.feats.forEach(function (f) { if (Math.abs(f.s - p.s) < 300) updateFeat(f, dt); });
-    // Other road users.
-    for (var i = G.npcs.length - 1; i >= 0; i--) {
-      var n = G.npcs[i];
-      if (n.mode === "path") updatePathCar(n, dt);
-      else if (n.mode === "poly") updatePolyCar(n, dt);
-      else if (n.mode === "walk") updateWalker(n, dt);
-      else if (n.mode === "train") updateTrain(n, dt);
-      if (n.gone) G.npcs.splice(i, 1);
+  // He steers: a simple car model moves the car, and its place along the course is worked out from where it is.
+  function project(s) {
+    var p = G.p;
+    for (var k = 0; k < 5; k++) {
+      var q = G.course.poseAt(s), along = (p.x - q.x) * Math.sin(q.a) - (p.y - q.y) * Math.cos(q.a);
+      s += clamp(along, -8, 8);
+      if (Math.abs(along) < 0.01) break;
     }
-    G.ambActive = G.npcs.some(function (n) { return n.kind === "amb" && !n.passed; });
-    checkRules(dt);
-    checkCrash();
-    updateSay(dt);
+    return s;
+  }
+  function sideOf(s) {
+    var p = G.p, q = G.course.poseAt(s);
+    return (p.x - q.x) * Math.cos(q.a) + (p.y - q.y) * Math.sin(q.a);
+  }
+  function localTo(C) {
+    var p = G.p, dx = p.x - C.x, dy = p.y - C.y;
+    return { u: dx * Math.cos(C.a) + dy * Math.sin(C.a), w: dx * Math.sin(C.a) - dy * Math.cos(C.a) };
+  }
+  function moveManual(dt) {
+    var p = G.p, course = G.course;
+    var maxS = 0.62 / (1 + p.v * p.v / 60);
+    var want = keys.left && !keys.right ? -maxS : keys.right && !keys.left ? maxS : 0;
+    var rate = want === 0 ? 2.4 : 1.5;
+    p.steer += clamp(want - p.steer, -rate * dt, rate * dt);
+    p.steer = clamp(p.steer, -maxS - 0.04, maxS + 0.04);
+    p.a += p.v * Math.tan(p.steer) / 2.6 * dt;
+    p.x += Math.sin(p.a) * p.v * dt; p.y -= Math.cos(p.a) * p.v * dt;
+    G.prevS = p.s;
+    var pend = course.pending;
+    var s = project(p.s);
+    if (pend && pend.kind === "junction") s = Math.min(s, pend.s0 + 2 * JH + 4);
+    p.s = s; p.d = sideOf(s); p.td = p.d;
+    if (p.blinkOffAt && G.t > p.blinkOffAt) { p.blink = 0; p.blinkOffAt = 0; }
+    if (pend && pend.kind === "junction") manualJunction(pend);
+    else if (pend && pend.kind === "round") manualRound(pend);
+    var pc = curPiece();
+    if (pc.kind === "round" && Math.hypot(p.x - pc.C.x, p.y - pc.C.y) < RB.island + 0.45) return crash("Du körde upp på mitten av cirkulationsplatsen!");
+    if (pc.kind !== "road" && pc.kind !== "mv") { G.lane = null; return; }
+    // Off the road, onto the pavement or into the barrier.
+    var t = p.s - pc.s0, st = pc.st, prev = course.pieces[pc.index - 1];
+    var nearJ = (pc.warnEnd && t > pc.len - 10) || (prev && (prev.kind === "junction" || prev.kind === "round") && t < 10);
+    if (!nearJ) {
+      var right, left, give;
+      if (pc.kind === "mv") {
+        right = (st.acc && t < st.acc + 40) || (st.dec && t > st.dec[0] - 40) ? 5.25 : 4.3; left = -6.0; give = 2.4;
+        if (st.acc && t > st.acc + 40 && p.d > 2.6) { fault("accel", "Accelerationsfältet tog slut! Du måste in på motorvägen innan det tar slut.", true); return crash("Du körde av vägen där accelerationsfältet tog slut."); }
+        if (p.d < -7.6) return crash("Du körde in i mitträcket!");
+      } else {
+        right = 1.75 + (pc.parking ? 2.5 : 0) + (st.bus && Math.abs(t - st.bus.s) < 16 ? 3.5 : 0); left = -5.25;
+        give = pc.env === "stad" ? 0.45 : 2.2;
+      }
+      if (p.d + CAR.hw > right + give || p.d - CAR.hw < left - give)
+        return crash(pc.env === "stad" && pc.kind === "road" ? "Du körde upp på trottoaren!" : "Du körde av vägen!");
+    }
+    // Changing lanes: the blinker has to be on first.
+    var lane = pc.kind === "mv" ? (p.d < -1.75 ? -1 : p.d > 1.75 ? 1 : 0) : (p.d < -1.75 ? -1 : 0);
+    if (G.lane != null && lane !== G.lane && G.lanePiece === pc.index) {
+      var dirC = lane > G.lane ? 1 : -1;
+      if (p.blink !== dirC) fault("lane:" + pc.index, "Blinka innan du byter körfält eller kör ut för att köra om.", false);
+      else p.blinkOffAt = G.t + 1.5;
+    }
+    G.lane = lane; G.lanePiece = pc.index;
+  }
+  function armOk(pc, d) { return d === 0 ? pc.arms[90] : d === 1 ? pc.arms[0] : pc.arms[180]; }
+  function manualJunction(pc) {
+    var p = G.p, L = localTo(pc.C);
+    if (!pc.entered && L.w > -JH - 1.5) {
+      pc.entered = true; pc.entryBlink = p.blink; pc.entryBlinkS = p.blinkS; pc.maxV = 0;
+      var guess = p.blink && armOk(pc, p.blink) ? p.blink : armOk(pc, 0) ? 0 : pc.want;
+      if (pc.st.ctrl === "stopp" && !pc.stopped) fault("stop:" + pc.index, "Du stannade inte vid stopplinjen. Vid stopplikt ska bilen stå helt still.", true);
+      yieldCheck(pc, polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(guess, 0, 0).slice(1))));
+    }
+    if (!pc.entered) return;
+    pc.maxV = Math.max(pc.maxV, p.v);
+    var dir = L.w > JH + 1.5 && Math.abs(L.u) < JH ? 0 : L.u > JH + 1.5 ? 1 : L.u < -JH - 1.5 ? -1 : null;
+    if (dir === null) return;
+    if (!armOk(pc, dir)) return crash("Du körde av vägen!");
+    if (dir !== pc.want) fault("route:" + pc.index, pc.want === 0 ? "Vi skulle köra rakt fram." : pc.want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster.", false);
+    if (dir !== 0 && pc.entryBlink !== dir) fault("blink:" + pc.index, "Du glömde blinka före svängen.", false);
+    else if (dir !== 0 && pc.entryBlinkS > pc.s0 - 22) fault("blink:" + pc.index, "Blinka tidigare, i god tid före svängen.", false);
+    if (dir !== 0 && pc.maxV * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
+    pc.dir = dir;
+    pc.poly = polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1)));
+    pc.len = pc.poly.len; pc.open = false;
+    if (dir !== 0) p.blink = 0;
+    G.course.close(pc);
+    p.s = project(pc.s0 + pc.len); p.d = sideOf(p.s); G.prevS = p.s; G.lane = null;
+  }
+  function manualRound(pc) {
+    var p = G.p, t = p.s - pc.s0;
+    if (t < pc.joinT + 4) return;
+    var L = localTo(pc.C), r = Math.hypot(L.u, L.w);
+    if (r < RB.outer + 2.5) return;
+    var ang = (Math.atan2(L.w, L.u) / DEG + 360) % 360, arm = Math.round(ang / 90) * 90 % 360;
+    if (Math.abs(angDiff(ang * DEG, arm * DEG)) > 28 * DEG) return crash("Du körde av vägen!");
+    var cand = pc.exitAt.filter(function (ex) { return ex.a === arm && ex.t <= t + 25; });
+    var ex = cand.length ? cand[cand.length - 1] : pc.exitAt.filter(function (e) { return e.a === arm; })[0];
+    var k = ((ex.k - 1) % 4) + 1;
+    if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
+    if (p.blink !== 1) fault("blink:" + pc.index, "Blinka höger innan du kör ut ur cirkulationsplatsen.", false);
+    pc.poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0)); pc.len = pc.poly.len; pc.open = false;
+    p.blink = 0;
+    G.course.close(pc);
+    p.s = project(pc.s0 + ex.t + 12); p.d = sideOf(p.s); G.prevS = p.s; G.lane = null;
   }
 
   function crossed(x) { return G.prevS < x && G.p.s >= x; }
@@ -734,8 +865,13 @@
     local.unshift({ x: 1.75, y: -JH });
     pc.poly = polyG(pc.C, local);
     pc.len = pc.poly.len; pc.open = false;
-    // Give way: a car with right of way that will cross our path soon.
-    var mine = sample(pc.poly, 1);
+    yieldCheck(pc, pc.poly);
+    if (p.blink) p.blink = 0;
+    G.course.close(pc);
+  }
+  // Give way: a car with right of way that will cross our path soon.
+  function yieldCheck(pc, poly) {
+    var st = pc.st, mine = sample(poly, 1);
     pc.npcs.forEach(function (n) {
       if (!n.prio || n.gone) return;
       var tc = conflictT(n.poly, mine, n.t);
@@ -747,8 +883,6 @@
           st.ctrl === "hoger" ? "Högerregeln! Bilen från höger hade företräde." : "Du lämnade inte företräde!", true);
       }
     });
-    if (p.blink) p.blink = 0;
-    G.course.close(pc);
   }
   function sample(poly, step) { var out = []; for (var t = 0; t <= poly.len; t += step) out.push(poly.at(t)); return out; }
   function conflictT(poly, pts, fromT) {
@@ -783,7 +917,7 @@
       });
     }
     // Leave at the exit the car is at while blinking right.
-    if (pc.open) {
+    if (pc.open && !G.manual) {
       for (var i = 0; i < pc.exitAt.length; i++) {
         var ex = pc.exitAt[i];
         var last = i === pc.exitAt.length - 1;
@@ -798,7 +932,7 @@
           break;
         }
       }
-    } else if (!pc.praised && t > pc.len + 2) {
+    } else if (!pc.open && !pc.praised && t > pc.len + 2) {
       pc.praised = true;
       if (G.faults.length === pc.faultsAt && st.good) praise(st.good);
     }
@@ -1381,12 +1515,14 @@
     var on = Math.floor(G.t * 2.6) % 2 === 0;
     hud.l.className = "blink" + (G.p.blink < 0 && on ? " on" : "");
     hud.r.className = "blink" + (G.p.blink > 0 && on ? " on" : "");
-    hud.bl.classList.toggle("on", G.p.blink < 0); hud.br.classList.toggle("on", G.p.blink > 0);
+    var bl = G.manual ? hud.kl : hud.bl, br = G.manual ? hud.kr : hud.br;
+    hud.bl.classList.toggle("on", !G.manual && G.p.blink < 0); hud.br.classList.toggle("on", !G.manual && G.p.blink > 0);
+    bl.classList.toggle("on", G.p.blink < 0); br.classList.toggle("on", G.p.blink > 0);
     if (G.p.blink && on !== G.lastOn) tick();
     G.lastOn = on;
   }
   var hud = { speed: document.getElementById("speed"), limit: document.getElementById("limit"), l: document.getElementById("hudL"), r: document.getElementById("hudR"),
-    bl: document.getElementById("bl"), br: document.getElementById("br") };
+    bl: document.getElementById("bl"), br: document.getElementById("br"), kl: document.getElementById("kl"), kr: document.getElementById("kr") };
 
   function updateCam(dt) {
     var c = G.cam, p = G.p;
@@ -1395,7 +1531,7 @@
     c.sc += (want - c.sc) * Math.min(1, dt * 1.5);
     var k = Math.min(1, dt * 6);
     c.x += (p.x - c.x) * k; c.y += (p.y - c.y) * k;
-    c.a += angDiff(G.course.poseAt(p.s).a, c.a) * Math.min(1, dt * 3);
+    c.a += angDiff(G.manual ? p.a : G.course.poseAt(p.s).a, c.a) * Math.min(1, dt * 3);
   }
 
   var lastFrame = 0;
@@ -1424,7 +1560,7 @@
     ["menu", "game", "paused", "result"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
     if (id === "game") resize();
   }
-  function pause() { if (!G || G.over) return; G.paused = true; keys.gas = keys.brake = false; if (window.speechSynthesis) speechSynthesis.cancel(); siren(0); show("paused"); }
+  function pause() { if (!G || G.over) return; G.paused = true; keys.gas = keys.brake = keys.left = keys.right = false; if (window.speechSynthesis) speechSynthesis.cancel(); siren(0); show("paused"); }
   function finish() {
     G.over = true; siren(0);
     if (sirenGain) sirenGain.gain.value = 0;
@@ -1462,10 +1598,12 @@
     v.checked = !!store.voice; s.checked = !!store.sound;
     document.getElementById("opt3d").checked = !!store.view3d;
     document.getElementById("optTraffic").value = String(store.traffic || 0);
+    document.getElementById("optSteer").value = store.steer === "auto" ? "auto" : "manual";
     document.getElementById("optWalkers").value = String(store.walkers || 0);
     document.getElementById("pad").hidden = false;
   }
   document.getElementById("optVoice").addEventListener("change", function (e) { store.voice = e.target.checked; saveStore(); if (store.voice) speak("Hej! Jag är din lärare."); });
+  document.getElementById("optSteer").addEventListener("change", function (e) { store.steer = e.target.value; saveStore(); });
   document.getElementById("optTraffic").addEventListener("change", function (e) { store.traffic = +e.target.value; saveStore(); });
   document.getElementById("optWalkers").addEventListener("change", function (e) { store.walkers = +e.target.value; saveStore(); });
   document.getElementById("opt3d").addEventListener("change", function (e) { store.view3d = e.target.checked; saveStore(); });
@@ -1478,8 +1616,7 @@
   document.getElementById("next").addEventListener("click", function () { startLesson(G.idx + 1); });
   document.getElementById("toMenu").addEventListener("click", function () { G = null; buildMenu(); show("menu"); });
   // Touch buttons only where there is touch.
-  var touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
-  if (!touch) document.getElementById("pad").style.display = "none";
+  if (!touchUI) document.getElementById("pad").style.display = "none";
 
   // ---------- the lessons ----------
   // Distances in metres along each piece. Signs stand on the right; "speed" draws a speed limit sign.
@@ -1496,10 +1633,10 @@
     };
     steps.push({ type: "road", env: "stad", limit: 50, len: 110, signs: [{ s: 8, speed: 50 }],
       say: [[0, "Fri körning! Jag säger vart vi ska, så följer du trafikreglerna. Lycka till."]] });
-    var n = 6 + Math.floor(Math.random() * 3);
+    var n = 4 + Math.floor(Math.random() * 3);
     for (var i = 0; i < n; i++) {
       // A road with something on it, then a junction or a roundabout.
-      if (i === 3 && Math.random() < 0.7) {
+      if (i === 2 && Math.random() < 0.7) {
         env = env === "stad" ? "land" : "stad";
         steps.push(env === "land"
           ? { type: "road", env: "land", limit: 70, len: 260, signs: [{ s: 4, code: "E6" }, { s: 10, speed: 70 }], oncoming: [30, 150],
@@ -1639,7 +1776,7 @@
   // Hooks for automated checks.
   window.SPEL = { lessons: LESSONS, start: startLesson, state: function () { return G; }, keys: keys, setBlink: setBlink,
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");
