@@ -326,7 +326,7 @@
       if (!ch0 || ch0.s !== 0) break;
       leg = joinLegs(leg, legFrom(ch0.a.h));
     }
-    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
+    var cutE = leg.kind === "junction" ? run.jh : run.rbArm;   // a dead end gets a turning circle
     var Lr = leg.line.len - cutS - cutE, len, n, rel = [0], i, start = null;
     if (Lr >= 12) {
       // The real road's right lane, every metre, its heading taken across 12 m so a corner becomes a curve.
@@ -414,6 +414,12 @@
           (ch2.s === 1 ? " Blinka höger redan när du kör in." : " Blinka höger när du har passerat avfarten före.")]);
       }
     }
+    if (!jst && leg.kind === "dead") {
+      // The end of a street, or of the map: round a turning circle and back the way we came.
+      jst = { type: "round", turn: true, want: 4, good: "Snyggt vänt.", npcs: [], real: { by: {}, back: H(last.e, !last.f), key: leg.end.key } };
+      road.say.push([Math.max(1, len - 80), (leg.end.edges.length <= 1 ? "Gatan tar slut där framme." : "Här tar kartan slut.") +
+        " Vi kör runt vändplanen och tillbaka."]);
+    }
     if (jst) steps.push(jst);
     else {
       road.finish = true;
@@ -458,7 +464,7 @@
     if (!best) return out;
     var dirs = [true, false].filter(function (f) { return LIVE[hk(H(best.e, f))]; }), f = pick(dirs);
     var h = H(best.e, f), leg = legFrom(h), off = f ? best.t : best.e.len - best.t;
-    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
+    var cutE = leg.kind === "junction" ? run.jh : run.rbArm;
     off = Math.max(0, Math.min(off, leg.line.len - cutE - 80));
     legSteps(run, leg, "start", off, null).forEach(function (s) { out.push(s); });
     out.start = out[0].start;   // the game's world is the map's: the course starts on the real road

@@ -346,6 +346,7 @@
     pc.npcs = []; pc.spawned = false;
     pc.poseAt = function (t) { return pc.poly.at(t); };
     pc.endPose = function () { return pc.poly.at(pc.poly.len); };
+    if (st.turn) return pc;   // a turning circle at the end of a street (real roads): no signs
     course.addSign(pc.s0 + RB.arm - 18, { code: "B1" }, pc.env);
     course.addSign(pc.s0 + RB.arm - 18, { code: "D3", u: (pc.env === "stad" ? 3.3 : 4.4) + 2.4 }, pc.env);
     return pc;
@@ -981,8 +982,9 @@
     var cand = pc.exitAt.filter(function (ex) { return ex.a === arm && ex.t <= t + 25; });
     var ex = cand.length ? cand[cand.length - 1] : pc.exitAt.filter(function (e) { return e.a === arm; })[0];
     var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
+    if (pc.st.turn && k !== 4) return crash("Du körde av vägen!");
     if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
-    if (p.blink !== 1) fault("blink:" + pc.index, "Blinka höger innan du kör ut ur cirkulationsplatsen.", false);
+    if (p.blink !== 1 && !pc.st.turn) fault("blink:" + pc.index, "Blinka höger innan du kör ut ur cirkulationsplatsen.", false);
     pc.poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0)); pc.len = pc.poly.len; pc.open = false;
     p.blink = 0;
     G.course.close(pc);
@@ -1463,12 +1465,12 @@
       for (var i = 0; i < pc.exitAt.length; i++) {
         var ex = pc.exitAt[i];
         var last = i === pc.exitAt.length - 1;
-        if (crossed(pc.s0 + ex.t - 6) && (p.blink === 1 || last)) {
+        if (crossed(pc.s0 + ex.t - 6) && (pc.st.turn ? ex.k === 4 : p.blink === 1 || last)) {
           var poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0));
           pc.poly = poly; pc.len = poly.len; pc.open = false;
           var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
           if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
-          if (p.blinkS > pc.s0 + ex.t - 14 && !last) fault("blink:" + pc.index, "Blinka höger lite tidigare innan du kör ut.", false);
+          if (p.blinkS > pc.s0 + ex.t - 14 && !last && !pc.st.turn) fault("blink:" + pc.index, "Blinka höger lite tidigare innan du kör ut.", false);
           p.blink = 0;
           G.course.close(pc);
           break;
@@ -1915,7 +1917,7 @@
   function drawRound(pc, pass) {
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad";
-    var arms = [270, 0, 90, 180];
+    var arms = pc.st.turn ? [270] : [270, 0, 90, 180];
     if (pass === 0) {
       if (stad) { disc(COL.walk, 0, 0, RB.outer + 2.6); arms.forEach(function (a) { ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.walk, -HW - 2.6, HW + 2.6, -RB.arm - (a === 270 ? 0 : ARM), -RB.outer + 2); ctx.restore(); }); }
     } else if (pass === 1) {
@@ -1926,9 +1928,10 @@
     } else {
       arms.forEach(function (a) {
         ctx.save(); ctx.rotate((270 - a) * DEG);
+        dashes(0, -RB.arm - (a === 270 ? 0 : ARM), -RB.outer - 8, 3, stad ? 3 : 9, 0.12, 0);
+        if (pc.st.turn) { ctx.restore(); return; }
         // splitter island and give-way teeth
         ctx.fillStyle = COL.walk; ctx.beginPath(); ctx.moveTo(-0.15, RB.outer + 0.5); ctx.lineTo(0.15, RB.outer + 0.5); ctx.lineTo(0.7, RB.outer + 8); ctx.lineTo(-0.7, RB.outer + 8); ctx.closePath(); ctx.fill();
-        dashes(0, RB.outer + 8, RB.arm + (a === 270 ? 0 : ARM), 3, stad ? 3 : 9, 0.12, 0);
         ctx.fillStyle = COL.paint;
         for (var u = 0.9; u < HW - 0.4; u += 0.9) { ctx.beginPath(); ctx.moveTo(u, RB.outer + 0.6); ctx.lineTo(u + 0.6, RB.outer + 0.6); ctx.lineTo(u + 0.3, RB.outer + 1.6); ctx.closePath(); ctx.fill(); }
         ctx.restore();
