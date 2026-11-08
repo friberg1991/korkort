@@ -80,6 +80,14 @@ a { color: var(--accent); }
 .keys { font-size: 14px; color: var(--dim); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .btn { display: block; width: 100%; padding: 13px; margin: 8px 0 0; border: 0; border-radius: 12px; background: var(--btn); text-align: center; text-decoration: none; color: var(--text); }
 .btn.primary { background: var(--accent); color: #06231a; font-weight: 700; }
+.placeform { display: flex; gap: 8px; }
+.placeform input { flex: 1; min-width: 0; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+.placeform .btn { width: auto; padding: 13px 18px; }
+#placeList .btn { text-align: left; }
+.osm-note { font-size: 12px; }
+#street { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(68px + env(safe-area-inset-bottom)); max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 12px; border-radius: 10px; background: #1d4f9c; border: 2px solid #f2f4f6; color: #fff; font-size: 15px; font-weight: 700; pointer-events: none; z-index: 4; }
+#osm { position: absolute; left: 8px; bottom: calc(3px + env(safe-area-inset-bottom)); font-size: 10px; color: rgba(255,255,255,0.75); text-shadow: 0 1px 2px #000; pointer-events: none; z-index: 4; }
 .verdict { font-size: 28px; font-weight: 800; margin: 8px 0 4px; }
 .verdict.ok { color: #7fe0a4; } .verdict.no { color: #f0a09c; }
 .fault { padding: 10px 12px; margin: 0 0 8px; border-radius: 12px; background: var(--panel); border-left: 4px solid var(--gold); }
@@ -163,6 +171,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   <canvas id="cv"></canvas>
   <div id="flash"></div>
   <div id="say"><div class="face">🧑‍🏫</div><div><div class="who">LÄRAREN</div><div class="text" id="sayText"></div></div></div>
+  <div id="osm" hidden>© OpenStreetMap</div>
+  <div id="street" hidden></div>
   <div id="fact" class="fact"><b>💡 Visste du att…</b><span id="factText"></span></div>
   <div id="pad">
     <button id="bl" type="button" aria-label="Blinka vänster">◀</button>
@@ -181,6 +191,19 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <span id="speed">0</span><span id="kmh">km/h</span>
     <div id="limit">50</div>
     <span class="blink" id="hudR">▶</span>
+  </div>
+</div>
+
+<div id="place" class="screen" hidden>
+  <div class="wrap">
+    <h1>Riktiga vägar</h1>
+    <p>Skriv en plats, till exempel en gata och ort. Spelet hämtar vägarna och husen runt den, och läraren tar dig runt där.</p>
+    <form id="placeForm" class="placeform"><input id="placeQ" type="search" placeholder="Till exempel Storgatan, Växjö" autocomplete="off" enterkeyhint="search"><button class="btn primary" type="submit">Sök</button></form>
+    <button class="btn" id="placeHere" type="button">📍 Där jag är nu</button>
+    <p id="placeMsg" role="status"></p>
+    <div id="placeList"></div>
+    <button class="btn" id="placeBack" type="button">Tillbaka</button>
+    <p class="osm-note">Kartdata © OpenStreetMap-bidragsgivare</p>
   </div>
 </div>
 
@@ -228,6 +251,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 <script src="data.js"></script>
 <script src="three.min.js"></script>
 <script src="spel3d.js"></script>
+<script src="riktig.js"></script>
 <script src="spel.js"></script>
 </body>
 </html>

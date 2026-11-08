@@ -114,7 +114,9 @@
     }
   };
   Course.prototype.close = function (pc) {
-    this.pending = null; this.endS = pc.s0 + pc.len; this.endP = pc.endPose(); this.build();
+    this.pending = null; this.endS = pc.s0 + pc.len; this.endP = pc.endPose();
+    if (this.steps.onExit) this.steps.onExit(pc, this);
+    this.build();
   };
   Course.prototype.pieceAt = function (s) {
     for (var i = this.pieces.length - 1; i >= 0; i--) if (s >= this.pieces[i].s0) return this.pieces[i];
@@ -128,12 +130,13 @@
 
   function basePiece(st, course, kind) {
     var pc = {
-      kind: kind, st: st, s0: course.endS, P: course.endP, env: st.env || course.env, limit: st.limit || course.limit,
+      kind: kind, st: st, course: course, s0: course.endS, P: course.endP, env: st.env || course.env, limit: st.limit || course.limit,
       lanes: st.lanes || [0], said: {}, faultsAt: 0
     };
     course.env = pc.env; course.limit = pc.limit;
     pc.poseAt = function (t) { var q = toG(pc.P, 0, t); return { x: q.x, y: q.y, a: pc.P.a }; };
     pc.endPose = function () { return pc.poseAt(pc.len); };
+    pc.at = function (u, w) { var q = toG(pc.P, u, w); q.a = pc.P.a; return q; };
     (st.signs || []).forEach(function (sg) { course.addSign(pc.s0 + sg.s, sg, pc.env); });
     return pc;
   }
@@ -143,11 +146,15 @@
     if (st.type === "round") return makeRound(st, course);
     var pc = basePiece(st, course, st.type === "mv" ? "mv" : "road");
     pc.len = st.len;
+    if (st.bend) bendPiece(pc, st.bend);
     pc.center = st.center || (pc.env === "stad" && st.small ? "none" : "dash");
     pc.warnEnd = next && (next.type === "junction" || next.type === "round");
     pc.solid = st.solid || [];
     pc.isSolid = function (t) { for (var i = 0; i < pc.solid.length; i++) if (t >= pc.solid[i][0] && t <= pc.solid[i][1]) return true; return pc.center === "solid"; };
-    pc.decor = makeDecor(pc);
+    // Real houses are placed when first needed, so the junction after the road is there to keep clear of.
+    if (st.real) Object.defineProperty(pc, "decor", { configurable: true,
+      get: function () { return this._decor || (this._decor = realDecor(this)); }, set: function (v) { this._decor = v; } });
+    else pc.decor = makeDecor(pc);
     if (st.zebra) course.feats.push({ kind: "zebra", s: pc.s0 + st.zebra.s, pc: pc, peds: st.zebra.peds || [], started: false, bike: !!st.zebra.bike });
     if (st.rail) course.feats.push({ kind: "rail", s: pc.s0 + st.rail.s, pc: pc, state: "open", t: 0 });
     if (st.bus) course.feats.push({ kind: "bus", s: pc.s0 + st.bus.s, pc: pc });
@@ -156,6 +163,114 @@
     return pc;
   }
 
+  // A road with real bends: st.bend holds its heading every 2 m, from the start (riktig.js makes them).
+  function bendPiece(pc, rel) {
+    var DW = 2, n = rel.length, P = pc.P, xs = [P.x], ys = [P.y], as = [P.a], i;
+    for (i = 1; i < n; i++) {
+      var am = P.a + (rel[i - 1] + rel[i]) / 2;
+      xs.push(xs[i - 1] + Math.sin(am) * DW); ys.push(ys[i - 1] - Math.cos(am) * DW); as.push(P.a + rel[i]);
+    }
+    pc.len = (n - 1) * DW;
+    pc.poseAt = function (t) {
+      var f = clamp(t, 0, pc.len) / DW, k = Math.min(n - 2, Math.floor(f)); f -= k;
+      var q = { x: xs[k] + (xs[k + 1] - xs[k]) * f, y: ys[k] + (ys[k + 1] - ys[k]) * f, a: as[k] + (as[k + 1] - as[k]) * f };
+      var e = t < 0 ? t : t > pc.len ? t - pc.len : 0;   // past the ends the road goes on straight
+      if (e) { q.x += Math.sin(q.a) * e; q.y -= Math.cos(q.a) * e; }
+      return q;
+    };
+    pc.at = function (u, w) { var q = pc.poseAt(w); return { x: q.x + u * Math.cos(q.a), y: q.y + u * Math.sin(q.a), a: q.a }; };
+    // It is drawn in straight bits, a new one each time the road has turned about four degrees.
+    var segs = [0];
+    for (i = 1; i < n; i++) {
+      var k0 = segs[segs.length - 1];
+      if (i === n - 1 || Math.abs(rel[i] - rel[k0]) > 0.07 || (i - k0) * DW >= 40) segs.push(i);
+    }
+    pc.segs = segs.map(function (k) { return k * DW; });
+  }
+  // Houses from the map, and trees where there is room.
+  function realDecor(pc) {
+    var st = pc.st, r = rng(pc.s0 * 7 + 13), out = (st.houses || []).map(function (d) {
+      var o = Object.assign({}, d);
+      o.c = COL.houses[d.id % COL.houses.length]; o.roof = COL.roofs[Math.floor(d.id / 7) % COL.roofs.length];
+      return o;
+    });
+    var busy = function (u, w) { return out.some(function (d) { return d.t === "house" && u > d.u - 3 && u < d.u + d.dep + 3 && w > d.w - 3 && w < d.w + d.len + 3; }); };
+    var n = pc.env === "stad" ? (out.length > 2 ? 0 : pc.len / 30) : pc.len / 10;
+    for (var i = 0; i < n; i++) {
+      var side = r() < 0.5 ? 1 : -1, w = 6 + r() * (pc.len - 12), u = side > 0 ? 7 + r() * 22 : -11 - r() * 22;
+      if (!busy(u, w)) out.push({ t: "tree", u: u, w: w, r: 1.6 + r() * 1.8 });
+    }
+    // Nothing may stand on another road: real junctions are drawn with straight arms, so a house
+    // beside one real street can land on another street's arm, or on a house already there.
+    var pts = roadPoints(pc), homes = [];
+    pc.course.pieces.forEach(function (q) { if (q !== pc && q._decor) q._decor.forEach(function (d) { if (d.t === "house" && !d.gone) homes.push(houseFrame(q, d)); }); });
+    out = out.filter(function (d) {
+      if (d.t === "tree") {
+        var q = pc.at(d.u, d.w);
+        return !pts.some(function (p) { return Math.hypot(p.x - q.x, p.y - q.y) < d.r + 5; });
+      }
+      var f = houseFrame(pc, d);
+      if (pts.some(function (p) { return inFrame2(f, p, 6); })) return false;
+      return !homes.some(function (h) { return f.corners.some(function (c) { return inFrame2(h, c, 0.3); }) || h.corners.some(function (c) { return inFrame2(f, c, 0.3); }); });
+    });
+    // The new road, and the junction after it, clear away houses placed earlier that they run over.
+    var mine = [];
+    for (var t = 0; t <= pc.len; t += 3) mine.push(pc.at(-1.75, t));
+    pc.course.pieces.forEach(function (q) { if (q.index > pc.index) mine = mine.concat(piecePoints(q)); });
+    pc.course.pieces.forEach(function (q) {
+      if (q === pc || !q._decor) return;
+      q._decor.forEach(function (d) {
+        if (d.t !== "house" || d.gone) return;
+        var f = houseFrame(q, d);
+        if (mine.some(function (p) { return inFrame2(f, p, 6); })) { d.gone = true; if (d.obj) d.obj.visible = false; }
+      });
+    });
+    // On a winding road nothing may stand on another part of it.
+    if (pc.segs) out = out.filter(function (d) {
+      var w0 = d.w, w1 = d.w + (d.len || 0), pts = d.t === "house" ? [[d.u, w0], [d.u + d.dep, w0], [d.u, w1], [d.u + d.dep, w1], [d.u + d.dep / 2, (w0 + w1) / 2]] : [[d.u, d.w]];
+      pts = pts.map(function (k) { return pc.at(k[0], k[1]); });
+      for (var t = 0; t <= pc.len; t += 3) {
+        if (t > w0 - 12 && t < w1 + 12) continue;
+        var c = pc.poseAt(t);
+        for (var j = 0; j < pts.length; j++) if (Math.hypot(pts[j].x - c.x, pts[j].y - c.y) < 7.5) return false;
+      }
+      return true;
+    });
+    return out;
+  }
+  function houseFrame(pc, d) {
+    var q = pc.at(d.u + d.dep / 2, d.w + d.len / 2), f = { x: q.x, y: q.y, a: q.a, hu: d.dep / 2, hw: d.len / 2 };
+    f.corners = [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]].map(function (k) { return toG(q, k[0] * f.hu, k[1] * f.hw); });
+    return f;
+  }
+  function inFrame2(f, p, m) {
+    var dx = p.x - f.x, dy = p.y - f.y, c = Math.cos(f.a), s = Math.sin(f.a);
+    return Math.abs(dx * c + dy * s) < f.hu + m && Math.abs(dx * s - dy * c) < f.hw + m;
+  }
+  // Points every 3 m along the roads laid near a piece: other road pieces, junctions with their arms, roundabouts.
+  function roadPoints(pc) {
+    var out = [];
+    pc.course.pieces.forEach(function (q) {
+      if (q !== pc && Math.hypot(q.P.x - pc.P.x, q.P.y - pc.P.y) < 450 + (q.len || 0) + pc.len) out = out.concat(piecePoints(q));
+    });
+    return out;
+  }
+  function piecePoints(q) {
+    var out = [], t, r;
+    if (q.kind === "road" || q.kind === "mv") for (t = 0; t <= q.len; t += 3) out.push(q.at(-1.75, t));
+    else if (q.kind === "junction") {
+      [270, 0, 90, 180].forEach(function (al) {
+        if (al !== 270 && !q.arms[al]) return;
+        for (r = 0; r <= JH + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
+      });
+    } else if (q.kind === "round") {
+      [0, 90, 180, 270].forEach(function (al) {
+        for (r = 0; r <= RB.arm + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
+        for (r = 0; r < 8; r++) out.push(toG(q.C, Math.cos((al + r * 11) * DEG) * RB.outer, Math.sin((al + r * 11) * DEG) * RB.outer));
+      });
+    }
+    return out;
+  }
   function makeDecor(pc) {
     var r = rng(pc.s0 * 7 + 13), out = [];
     if (pc.kind === "mv") {
@@ -317,6 +432,8 @@
     document.getElementById("hb").hidden = L.weather !== "night";
     G.rec = []; G.recT = 0; G.p.high = false; G.p.gear = "D"; G.aquaT = 0;
     document.getElementById("rv").hidden = !L.reverse;
+    document.getElementById("osm").hidden = !L.real;
+    document.getElementById("street").hidden = true;
     show("game");
     ensureAudio();
     lastFrame = performance.now();
@@ -863,7 +980,7 @@
     if (Math.abs(angDiff(ang * DEG, arm * DEG)) > 28 * DEG) return crash("Du körde av vägen!");
     var cand = pc.exitAt.filter(function (ex) { return ex.a === arm && ex.t <= t + 25; });
     var ex = cand.length ? cand[cand.length - 1] : pc.exitAt.filter(function (e) { return e.a === arm; })[0];
-    var k = ((ex.k - 1) % 4) + 1;
+    var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
     if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
     if (p.blink !== 1) fault("blink:" + pc.index, "Blinka höger innan du kör ut ur cirkulationsplatsen.", false);
     pc.poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0)); pc.len = pc.poly.len; pc.open = false;
@@ -1213,7 +1330,8 @@
     return "red";
   }
   function spawnJunctionCar(pc, spec, lead) {
-    var arm = armOf(spec.from), turn = turnOf(spec.to || "straight");
+    var arm = armOf(spec.from), turn = turnOf(spec.to || "straight"), out = (arm + (turn === 0 ? 180 : turn === 1 ? 90 : 270)) % 360;
+    if ((arm !== 270 && !pc.arms[arm]) || (out !== 270 && !pc.arms[out])) return null;
     var land = pc.env !== "stad";
     var vt = (spec.v || (land ? 70 : 40)) / KMH;
     lead = lead || (land ? 160 : 90);
@@ -1348,7 +1466,7 @@
         if (crossed(pc.s0 + ex.t - 6) && (p.blink === 1 || last)) {
           var poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0));
           pc.poly = poly; pc.len = poly.len; pc.open = false;
-          var k = ((ex.k - 1) % 4) + 1;
+          var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
           if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
           if (p.blinkS > pc.s0 + ex.t - 14 && !last) fault("blink:" + pc.index, "Blinka höger lite tidigare innan du kör ut.", false);
           p.blink = 0;
@@ -1580,9 +1698,42 @@
     c2.fillStyle = speckle; c2.fillRect(x, y, w, h);
   }
   function framePiece(P) { ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(P.a); }
+  // A bending road is drawn as straight bits, each cut off where it meets the next along the line
+  // halfway between their sideways directions, so lane lines and kerbs meet without a gap.
+  function inFrame(pc, fn) {
+    if (!pc.segs) { framePiece(pc.P); fn(pc); ctx.restore(); return; }
+    var fr = pc.frames, U = 80, k;
+    if (!fr) {
+      var S = pc.segs, pts = S.map(function (w) { return pc.poseAt(w); }), chord = [];
+      for (k = 0; k + 1 < S.length; k++) chord.push(headingOf(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y));
+      var cut = S.map(function (w, j) {
+        var a1 = j === 0 ? pc.P.a : chord[j - 1], a2 = j === S.length - 1 ? pts[j].a : chord[j], a = a1 + angDiff(a2, a1) / 2;
+        return { x: Math.cos(a), y: Math.sin(a) };
+      });
+      fr = pc.frames = [];
+      for (k = 0; k + 1 < S.length; k++) {
+        var A = pts[k], B = pts[k + 1], mA = cut[k], mB = cut[k + 1], c = chord[k];
+        // the bit reaches a hair past its end, so no seam shows
+        var bx = B.x + Math.sin(c) * 0.08, by = B.y - Math.cos(c) * 0.08;
+        var det = mB.x * mA.y - mA.x * mB.y, sx = Math.abs(det) > 1e-9 ? (mB.x * (by - A.y) - (bx - A.x) * mB.y) / det : 1e9;
+        var side = function (sg) {
+          if (sx * sg > 0 && Math.abs(sx) < U) return [{ x: A.x + mA.x * sx, y: A.y + mA.y * sx }];
+          return [{ x: A.x + mA.x * U * sg, y: A.y + mA.y * U * sg }, { x: bx + mB.x * U * sg, y: by + mB.y * U * sg }];
+        };
+        fr.push({ A: A, c: c, w: S[k], clip: side(1).concat(side(-1).reverse()) });
+      }
+    }
+    fr.forEach(function (f) {
+      ctx.save(); ctx.beginPath();
+      f.clip.forEach(function (q, j) { if (j) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
+      ctx.closePath(); ctx.clip();
+      ctx.translate(f.A.x, f.A.y); ctx.rotate(f.c); ctx.translate(0, f.w);
+      fn(pc); ctx.restore();
+    });
+  }
 
-  function drawRoadGround(pc) {
-    framePiece(pc.P);
+  function drawRoadGround(pc) { inFrame(pc, drawRoadGroundL); }
+  function drawRoadGroundL(pc) {
     var L = pc.len;
     if (pc.kind === "mv") {
       pc.decor.forEach(function (d) { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); });
@@ -1590,12 +1741,13 @@
       var pr = pc.parking ? 2.5 : 0;
       rect(COL.walk, 1.75 + pr, 1.75 + pr + 2.6, 0, L); rect(COL.walk, -5.25 - 2.6, -5.25, 0, L);
       pc.decor.forEach(function (d) {
-        if (d.t !== "house") return;
+        if (d.t !== "house" || d.gone) return;
         ctx.fillStyle = "rgba(0,0,0,0.18)"; ctx.fillRect(d.u + 0.6, -d.w - d.len + 0.8, d.dep, d.len);
         ctx.fillStyle = d.c; ctx.fillRect(d.u, -d.w - d.len, d.dep, d.len);
         ctx.fillStyle = d.roof; ctx.fillRect(d.u + 0.8, -d.w - d.len + 0.8, d.dep - 1.6, d.len - 1.6);
         ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(d.u + 0.8, -d.w - d.len / 2 - 0.15, d.dep - 1.6, 0.3);
       });
+      pc.decor.forEach(function (d) { if (d.t === "tree") { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); } });
     } else {
       pc.decor.forEach(function (d) {
         if (d.t === "field") { ctx.fillStyle = "#8fae5c"; ctx.fillRect(d.u, -d.w - d.len, d.dep, d.len);
@@ -1603,10 +1755,9 @@
       });
       pc.decor.forEach(function (d) { if (d.t === "tree") { disc("rgba(0,0,0,0.18)", d.u + 0.5, -d.w + 0.7, d.r); disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); } });
     }
-    ctx.restore();
   }
-  function drawRoadAsphalt(pc) {
-    framePiece(pc.P);
+  function drawRoadAsphalt(pc) { inFrame(pc, drawRoadAsphaltL); }
+  function drawRoadAsphaltL(pc) {
     var L = pc.len, st = pc.st;
     if (pc.kind === "mv") {
       rect("#8c8a82", -6.2, 4.5, 0, L);
@@ -1622,13 +1773,12 @@
       rect(COL.asph, -5.25, 1.75 + (pc.parking ? 2.5 : 0), 0, L);
       if (pc.env === "stad") { rect(COL.curb, 1.75 + (pc.parking ? 2.5 : 0), 1.95 + (pc.parking ? 2.5 : 0), 0, L); rect(COL.curb, -5.45, -5.25, 0, L); }
     }
-    ctx.restore();
   }
   function taper(u0, w0, w1, uEnd) { ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(4.3, -w0); ctx.lineTo(u0, -w0); ctx.lineTo(uEnd, -w1); ctx.closePath(); ctx.fill(); }
   function taper2(uStart, w0, w1, u1) { ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(uStart, -w0); ctx.lineTo(u1, -w1); ctx.lineTo(uStart, -w1); ctx.closePath(); ctx.fill(); }
 
-  function drawRoadMarks(pc) {
-    framePiece(pc.P);
+  function drawRoadMarks(pc) { inFrame(pc, drawRoadMarksL); }
+  function drawRoadMarksL(pc) {
     var L = pc.len, st = pc.st, ph = pc.s0;
     if (pc.kind === "mv") {
       ctx.fillStyle = COL.paint;
@@ -1641,7 +1791,7 @@
       if (st.acc) { ctx.fillStyle = COL.asph; ctx.fillRect(1.6, -st.acc, 0.6, st.acc); dashes(1.75, 0, st.acc, 1, 2, 0.3, ph); }
       if (st.dec) { ctx.fillStyle = COL.asph; ctx.fillRect(1.6, -st.dec[1], 0.6, st.dec[1] - st.dec[0]); dashes(1.75, st.dec[0], st.dec[1], 1, 2, 0.3, ph);
         ctx.fillStyle = COL.paint; ctx.fillRect(5.0, -st.dec[1], 0.2, st.dec[1] - st.dec[0]); }
-      ctx.restore(); return;
+      return;
     }
     var land = pc.env !== "stad";
     // Centre line: mittlinje 3+9 outside built-up areas, 3+3 in them; varningslinje 9+3 before a junction; heldragen where marked.
@@ -1722,7 +1872,6 @@
       ctx.fillStyle = "#2e3034"; ctx.fillRect(-60, -rw - 0.85, 120, 0.2); ctx.fillRect(-60, -rw + 0.65, 120, 0.2);
       ctx.fillStyle = COL.paint; ctx.fillRect(-1.75, -rw + 6.2, 3.5, 0.4);
     }
-    ctx.restore();
   }
 
   function drawJunction(pc, pass) {
@@ -1745,7 +1894,7 @@
     } else {
       arms.forEach(function (a) {
         ctx.save(); ctx.rotate((270 - a) * DEG);
-        if (a !== 270) dashes(0, JH, JH + ARM, 3, stad ? 3 : 9, 0.12, 0);
+        if (a !== 270) dashes(0, -JH - ARM, -JH, 3, stad ? 3 : 9, 0.12, 0);
         var line = entryLine(pc, a);
         if (line === "stop") rect(COL.paint, 0, HW, -JH - 0.5, -JH);
         else if (line === "yield") { ctx.fillStyle = COL.paint; for (var u = 0.2; u < HW - 0.4; u += 0.9) { ctx.beginPath(); ctx.moveTo(u, JH + 0.2); ctx.lineTo(u + 0.6, JH + 0.2); ctx.lineTo(u + 0.3, JH + 1.2); ctx.closePath(); ctx.fill(); } }
@@ -2004,7 +2153,7 @@
     if (first && (first.kind === "road" || first.kind === "mv") && G.p.s < 140) {
       var lead = Object.create(first);
       lead.P = toG(first.P, 0, -150); lead.P.a = first.P.a; lead.len = 150; lead.s0 = first.s0 - 150;
-      lead.st = first.kind === "mv" ? { acc: 150 } : {}; lead.parking = false; lead.solid = []; lead.warnEnd = false;
+      lead.st = first.kind === "mv" ? { acc: 150 } : {}; lead.parking = false; lead.solid = []; lead.warnEnd = false; lead.segs = null; lead.frames = null;
       lead.decor = (first.decor || []).filter(function (d) { return d.w + (d.len || 0) < 130; });
       vis.unshift(lead);
     }
@@ -2034,6 +2183,9 @@
     var lim = G.limit || pc.limit;
     hud.speed.className = kmh > lim + 3 ? "over" : "";
     hud.limit.textContent = lim;
+    // On real roads: the street we are on (kept through a junction until the next street starts).
+    if (pc.kind === "road" && pc.st.street !== undefined) G.street = pc.st.street;
+    if (G.street !== G.streetShown) { G.streetShown = G.street; hud.street.textContent = G.street || ""; hud.street.hidden = !G.street; }
     var on = Math.floor(G.t * 2.6) % 2 === 0;
     hud.l.className = "blink" + (G.p.blink < 0 && on ? " on" : "");
     hud.r.className = "blink" + (G.p.blink > 0 && on ? " on" : "");
@@ -2043,7 +2195,7 @@
     if (G.p.blink && on !== G.lastOn) tick();
     G.lastOn = on;
   }
-  var hud = { speed: document.getElementById("speed"), limit: document.getElementById("limit"), l: document.getElementById("hudL"), r: document.getElementById("hudR"),
+  var hud = { street: document.getElementById("street"), speed: document.getElementById("speed"), limit: document.getElementById("limit"), l: document.getElementById("hudL"), r: document.getElementById("hudR"),
     bl: document.getElementById("bl"), br: document.getElementById("br"), kl: document.getElementById("kl"), kr: document.getElementById("kr") };
 
   function updateCam(dt) {
@@ -2079,7 +2231,7 @@
 
   // ---------- screens ----------
   function show(id) {
-    ["menu", "game", "paused", "result"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
+    ["menu", "game", "paused", "result", "place"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
     if (id === "game") resize();
   }
   function pause() { if (!G || G.over) return; G.paused = true; document.getElementById("endRun").hidden = !G.lesson.endless; keys.gas = keys.brake = keys.left = keys.right = false; if (window.speechSynthesis) speechSynthesis.cancel(); siren(0); show("paused"); }
@@ -2259,7 +2411,7 @@
       b.innerHTML = '<span class="num">' + (L.icon || i + 1) + '</span><span class="txt"><span class="name"></span><br><span class="what"></span></span>' +
         (st != null ? '<span class="mark stars">' + "★★★".slice(0, st) + "☆☆☆".slice(0, 3 - st) + "</span>" : "");
       b.querySelector(".name").textContent = L.name; b.querySelector(".what").textContent = L.what;
-      b.addEventListener("click", function () { startLesson(i); });
+      b.addEventListener("click", function () { if (L.real) openPlace(i); else startLesson(i); });
       box.appendChild(b);
     });
     var v = document.getElementById("optVoice"), s = document.getElementById("optSound");
@@ -2279,6 +2431,55 @@
   document.getElementById("opt3d").addEventListener("change", function (e) { store.view3d = e.target.checked; saveStore(); });
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);
+  // ---------- real roads: pick a place ----------
+  var realArea = null, realIdx = -1, placeBusy = false;
+  function placeMsg(t) { document.getElementById("placeMsg").textContent = t || ""; }
+  function placeButtons(list, title) {
+    var box = document.getElementById("placeList"); box.innerHTML = "";
+    if (list.length && title) { var h = document.createElement("div"); h.className = "group"; h.textContent = title; box.appendChild(h); }
+    list.forEach(function (pl) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = pl.name;
+      b.addEventListener("click", function () { loadPlace(pl); });
+      box.appendChild(b);
+    });
+  }
+  function openPlace(i) {
+    realIdx = i; placeMsg("");
+    placeButtons(store.places || [], "Senast");
+    show("place");
+  }
+  function loadPlace(pl) {
+    if (placeBusy) return;
+    if (realArea && realArea.lat === pl.lat && realArea.lon === pl.lon) { startLesson(realIdx); return; }
+    placeBusy = true;
+    placeMsg("Hämtar vägar och hus runt " + pl.name.split(",")[0] + "… Det kan ta upp till en minut.");
+    window.RIKTIG.load(pl.lat, pl.lon).then(function (area) {
+      placeBusy = false;
+      if (!area.ok) { placeMsg("Hittade inga bilvägar där. Prova en annan plats."); return; }
+      area.name = pl.name; area.lat = pl.lat; area.lon = pl.lon; realArea = area;
+      store.places = [pl].concat((store.places || []).filter(function (q) { return q.name !== pl.name; })).slice(0, 5); saveStore();
+      placeMsg(""); startLesson(realIdx);
+    }).catch(function () { placeBusy = false; placeMsg("Kunde inte hämta kartan. Kolla att du är uppkopplad och försök igen om en stund."); });
+  }
+  document.getElementById("placeForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = document.getElementById("placeQ").value.trim();
+    if (!q || placeBusy) return;
+    placeMsg("Söker…");
+    window.RIKTIG.search(q).then(function (list) {
+      placeMsg(list.length ? "" : "Hittade ingen sådan plats. Prova att skriva gata och ort.");
+      placeButtons(list, "Välj en");
+    }).catch(function () { placeMsg("Kunde inte söka. Kolla att du är uppkopplad."); });
+  });
+  document.getElementById("placeHere").addEventListener("click", function () {
+    if (placeBusy) return;
+    if (!navigator.geolocation) return placeMsg("Telefonen kan inte säga var du är. Skriv en plats i stället.");
+    placeMsg("Letar efter var du är…");
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      loadPlace({ name: "där du är", lat: Math.round(pos.coords.latitude * 1e5) / 1e5, lon: Math.round(pos.coords.longitude * 1e5) / 1e5 });
+    }, function () { placeMsg("Kunde inte se var du är. Skriv en plats i stället."); }, { timeout: 15000, maximumAge: 60000 });
+  });
+  document.getElementById("placeBack").addEventListener("click", function () { buildMenu(); show("menu"); });
   document.getElementById("resume").addEventListener("click", function () { G.paused = false; show("game"); });
   document.getElementById("restart").addEventListener("click", function () { startLesson(G.idx); });
   document.getElementById("quit").addEventListener("click", function () { G = null; buildMenu(); show("menu"); });
@@ -2392,6 +2593,8 @@
   var LESSONS = [
     { id: "oandlig", icon: "♾️", name: "Oändlig körning", what: "Kör så länge du vill. Nya vägar, korsningar och hus byggs hela tiden. Avsluta i pausen.", endless: true,
       make: function () { return makeEndless(); }, steps: [] },
+    { id: "riktig", icon: "🗺️", name: "Riktiga vägar", what: "Kör på riktiga gator där du vill. Välj en plats, så hämtas vägar och hus från kartan.", endless: true, real: true,
+      make: function () { return window.RIKTIG.steps(realArea, { jh: JH, rbArm: RB.arm }); }, steps: [] },
     { id: "stad", icon: "🏙️", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 120, signs: [{ s: 8, speed: 50 }],
@@ -2606,6 +2809,7 @@
   // Hooks for automated checks.
   window.SPEL = { lessons: LESSONS, start: startLesson, state: function () { return G; }, keys: keys, setBlink: setBlink,
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
+    draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
       barrierDown: barrierDown, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 

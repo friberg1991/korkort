@@ -1,0 +1,442 @@
+// Riktiga vägar: hämtar vägar och hus runt en plats från OpenStreetMap och gör en körning av dem.
+// Kartdata © OpenStreetMap-bidragsgivare, fri att använda under ODbL; spelet skriver ut det.
+// The drive is the game's usual chain of pieces: a road with the real road's bends and houses, then
+// the real junction or roundabout, drawn the game's way (arms at right angles). The next road is
+// worked out once the car has left the junction, so a wrong turn goes on along the real road taken.
+// Coordinates are metres with x east and y south, as in the game; a heading a points along
+// (sin a, -cos a), and u is sideways, plus to the right.
+"use strict";
+(function () {
+  // Public map servers, tried in turn: a busy one answers with an error or not at all.
+  var OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter", "https://overpass-api.de/api/interpreter"];
+  var SEARCH = "https://nominatim.openstreetmap.org/search";
+  var ROADS = "trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
+  var RANK = { trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
+  var R_ROADS = 1200, R_HOUSES = 1000, R_DRIVE = 900;    // metres around the place
+  var DW = 2;                                            // the game's bend step (spel.js bendPiece)
+  var DEG = Math.PI / 180, RND = Math.random;
+  var WORD = { "0": "köra rakt fram", "1": "svänga höger", "-1": "svänga vänster" };
+  var HINTS = {
+    hoger: "Där gäller högerregeln.", stopp: "Där är det stopplikt, stanna helt vid linjen.", vaj: "Vi har väjningsplikt där.",
+    huvud: "De från sidan har väjningsplikt.", ljus: "Där är det trafikljus."
+  };
+  var GOOD = ["Bra!", "Snyggt.", "Fint kört."];
+  function pick(a) { return a[Math.floor(RND() * a.length)]; }
+  function angDiff(a, b) { var d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; }
+  function headingOf(dx, dy) { return Math.atan2(dx, -dy); }
+  function r1(v) { return Math.round(v * 10) / 10; }
+
+  // ---------- fetching ----------
+  function search(text) {
+    var url = SEARCH + "?format=jsonv2&limit=6&countrycodes=se&accept-language=sv&q=" + encodeURIComponent(text);
+    return fetch(url).then(function (r) { if (!r.ok) throw new Error("search " + r.status); return r.json(); }).then(function (list) {
+      var seen = {};
+      return list.map(function (x) {
+        var parts = x.display_name.split(", ").filter(function (p) { return !/^\d{3} ?\d{2}$/.test(p) && p !== "Sverige"; });
+        return { name: parts.slice(0, 3).join(", "), lat: +x.lat, lon: +x.lon };
+      }).filter(function (x) { if (seen[x.name]) return false; seen[x.name] = 1; return true; });
+    });
+  }
+  function overpass(query, i) {
+    i = i || 0;
+    var ctl = typeof AbortController === "function" ? new AbortController() : null, timer = ctl ? setTimeout(function () { ctl.abort(); }, 60000) : 0;
+    return fetch(OVERPASS[i], { method: "POST", body: "data=" + encodeURIComponent(query), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { if (!r.ok) throw new Error("overpass " + r.status); return r.json(); })
+      .then(function (j) { clearTimeout(timer); return j; })
+      .catch(function (e) { clearTimeout(timer); if (i + 1 < OVERPASS.length) return overpass(query, i + 1); throw e; });
+  }
+  function load(lat, lon) {
+    var ar = "(around:" + R_ROADS + "," + lat + "," + lon + ")", ah = "(around:" + R_HOUSES + "," + lat + "," + lon + ")";
+    var q = '[out:json][timeout:90];way["highway"~"^(' + ROADS + ')$"]' + ar + ";out body qt;node(w);out body qt;" +
+      'way["building"]' + ah + ";out geom qt;";
+    return overpass(q).then(function (json) { return makeArea(json, lat, lon); });
+  }
+
+  // ---------- the map as a graph ----------
+  function cumOf(pts) {
+    var c = [0];
+    for (var i = 1; i < pts.length; i++) c.push(c[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    return c;
+  }
+  function line(pts) { var c = cumOf(pts); return { pts: pts, cum: c, len: c[c.length - 1] }; }
+  function pointAt(L, t) {
+    var p = L.pts, c = L.cum, n = p.length;
+    if (n === 1) return p[0];
+    if (t <= 0) return p[0];
+    if (t >= L.len) return p[n - 1];
+    var lo = 0, hi = n - 1;
+    while (hi - lo > 1) { var m = (lo + hi) >> 1; if (c[m] <= t) lo = m; else hi = m; }
+    var f = (t - c[lo]) / (c[lo + 1] - c[lo] || 1e-6);
+    return { x: p[lo].x + (p[lo + 1].x - p[lo].x) * f, y: p[lo].y + (p[lo + 1].y - p[lo].y) * f };
+  }
+  function drivable(t) {
+    if (t.area === "yes") return false;
+    var mv = t.motor_vehicle || t.motorcar || "";
+    if (/^(no|private)$/.test(mv)) return false;
+    if (/^(no|private)$/.test(t.access || "") && !/^(yes|destination|permissive)$/.test(mv)) return false;
+    return true;
+  }
+  function makeArea(json, lat0, lon0) {
+    var K = 111320, kx = K * Math.cos(lat0 * DEG);
+    function P(lat, lon) { return { x: (lon - lon0) * kx, y: -(lat - lat0) * K }; }
+    var nodes = {}, ways = [], houses = [];
+    json.elements.forEach(function (e) {
+      if (e.type === "node") { var p = P(e.lat, e.lon); p.id = e.id; p.tags = e.tags || null; nodes[e.id] = p; return; }
+      if (e.type !== "way" || !e.tags) return;
+      if (e.tags.building && e.geometry) { var hs = makeHouse(e, P); if (hs) houses.push(hs); }
+      else if (e.tags.highway && drivable(e.tags)) ways.push(e);
+    });
+    // A roundabout's nodes all become one point, at their middle.
+    var parent = {};
+    function find(a) { if (parent[a] === undefined) parent[a] = a; while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+    ways.forEach(function (w) {
+      if (!/^(roundabout|circular)$/.test(w.tags.junction || "")) return;
+      w.rb = true;
+      w.nodes.forEach(function (id) { var a = find(id), b = find(w.nodes[0]); if (a !== b) parent[a] = b; });
+    });
+    var rbOf = {}, mid = {};
+    Object.keys(parent).forEach(function (id) { if (nodes[id]) rbOf[id] = "R" + find(id); });
+    Object.keys(nodes).forEach(function (id) { var t = nodes[id].tags; if (t && t.highway === "mini_roundabout" && !rbOf[id]) rbOf[id] = "R" + id; });
+    Object.keys(rbOf).forEach(function (id) {
+      var m = mid[rbOf[id]] || (mid[rbOf[id]] = { x: 0, y: 0, n: 0 });
+      m.x += nodes[id].x; m.y += nodes[id].y; m.n++;
+    });
+    Object.keys(mid).forEach(function (k) { mid[k].x /= mid[k].n; mid[k].y /= mid[k].n; });
+    // Every end of a way, and every node shared by ways, is a vertex.
+    var use = {};
+    ways.forEach(function (w) {
+      if (w.rb) return;
+      var n = w.nodes.length;
+      w.nodes.forEach(function (id, i) { use[id] = (use[id] || 0) + (i === 0 || i === n - 1 ? 2 : 1); });
+    });
+    var verts = {}, edges = [];
+    function vert(id) {
+      var key = rbOf[id] || "n" + id, v = verts[key];
+      if (!v) { var c = rbOf[id] ? mid[key] : nodes[id]; v = verts[key] = { key: key, x: c.x, y: c.y, rb: !!rbOf[id], node: rbOf[id] ? null : nodes[id], edges: [] }; }
+      return v;
+    }
+    function addEdge(w, ids) {
+      var a = vert(ids[0]), b = vert(ids[ids.length - 1]);
+      if (a === b) return;
+      var pts = ids.map(function (id) { return nodes[id]; });
+      if (a.rb) pts[0] = { x: a.x, y: a.y };
+      if (b.rb) pts[pts.length - 1] = { x: b.x, y: b.y };
+      var t = w.tags, ow = /^(yes|true|1)$/.test(t.oneway || "") ? 1 : /^(-1|reverse)$/.test(t.oneway || "") ? -1 : 0;
+      var hw = t.highway.replace("_link", ""), L = line(pts);
+      if (L.len < 0.5) return;
+      var e = { a: a, b: b, pts: pts, tags: t, rank: RANK[hw] != null ? RANK[hw] : 1, ow: ow, seen: 0, len: L.len, lf: L };
+      e.i = edges.length; edges.push(e); a.edges.push(e); b.edges.push(e);
+    }
+    ways.forEach(function (w) {
+      if (w.rb) return;
+      var ids = w.nodes.filter(function (id) { return nodes[id]; }), from = 0;
+      for (var i = 1; i < ids.length; i++) {
+        if (i === ids.length - 1 || use[ids[i]] >= 2 || rbOf[ids[i]]) { addEdge(w, ids.slice(from, i + 1)); from = i; }
+      }
+    });
+    var grid = {};
+    houses.forEach(function (h) { var k = Math.floor(h.cx / 60) + "," + Math.floor(h.cy / 60); (grid[k] = grid[k] || []).push(h); });
+    return { ok: edges.some(function (e) { return e.rank >= 1 && e.len > 50; }), verts: verts, edges: edges, grid: grid, houses: houses.length };
+  }
+  function makeHouse(e, P) {
+    if (e.tags.building === "roof") return null;
+    var pts = e.geometry.map(function (g) { return P(g.lat, g.lon); });
+    if (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) pts.pop();
+    if (pts.length < 3) return null;
+    var cx = 0, cy = 0;
+    pts.forEach(function (q) { cx += q.x; cy += q.y; });
+    var lv = parseFloat(e.tags["building:levels"]);
+    return { id: e.id, pts: pts, cx: cx / pts.length, cy: cy / pts.length, h: lv > 0 ? Math.min(40, lv * 3 + 1.2) : null };
+  }
+
+  // ---------- ways out of a vertex ----------
+  function H(e, f) { return { e: e, f: f }; }
+  function hk(h) { return h.e.i * 2 + (h.f ? 0 : 1); }
+  function from(h) { return h.f ? h.e.a : h.e.b; }
+  function to(h) { return h.f ? h.e.b : h.e.a; }
+  function okDir(h) { return h.e.ow === 0 || (h.e.ow === 1) === h.f; }
+  function hline(h) { return h.f ? h.e.lf : h.e.lr || (h.e.lr = line(h.e.pts.slice().reverse())); }
+  function outHeading(h) {
+    var L = hline(h), q = pointAt(L, Math.min(from(h).rb ? 24 : 12, L.len)), p = L.pts[0];
+    return headingOf(q.x - p.x, q.y - p.y);
+  }
+  function inHeading(h) {
+    var L = hline(h), q = pointAt(L, Math.max(0, L.len - (to(h).rb ? 24 : 12))), p = L.pts[L.pts.length - 1];
+    return headingOf(p.x - q.x, p.y - q.y);
+  }
+  // Along a road to the next junction, roundabout or end: through points where only two roads meet.
+  function legFrom(h) {
+    var hs = [h], v = to(h), n = 0;
+    while (!v.rb && v.edges.length === 2 && n++ < 80) {
+      var last = hs[hs.length - 1], e2 = v.edges[0] === last.e ? v.edges[1] : v.edges[0];
+      if (e2 === last.e || hs.some(function (x) { return x.e === e2; })) break;
+      var nh = H(e2, e2.a === v);
+      hs.push(nh); v = to(nh);
+    }
+    var far = Math.hypot(v.x, v.y) > R_ROADS - 80;
+    var kind = far ? "dead" : v.rb ? "round" : v.edges.length >= 3 ? "junction" : "dead";
+    var pts = [];
+    hs.forEach(function (x) { var p = hline(x).pts; (pts.length ? p.slice(1) : p).forEach(function (q) { pts.push(q); }); });
+    return { hs: hs, end: v, kind: kind, line: line(pts) };
+  }
+  function armsAt(v, last) {
+    var hin = inHeading(last), out = [];
+    v.edges.forEach(function (e) {
+      [true, false].forEach(function (f) {
+        if ((f ? e.a : e.b) !== v) return;
+        if (e === last.e && f !== last.f) return;   // back the way we came
+        var h = H(e, f);
+        out.push({ h: h, rel: angDiff(outHeading(h), hin), ok: okDir(h) });
+      });
+    });
+    return out;
+  }
+  // The game's ways: at a junction 0 ahead, 1 right, -1 left; in a roundabout exit 1 right, 2 ahead, 3 left.
+  function jsec(rel) { var d = rel / DEG; return Math.abs(d) <= 50 ? 0 : d > 50 && d <= 150 ? 1 : d < -50 && d >= -150 ? -1 : null; }
+  function rsec(rel) { var d = rel / DEG; return Math.abs(d) <= 45 ? 2 : d > 45 && d <= 135 ? 1 : d < -45 && d >= -135 ? 3 : null; }
+  function secMid(fn, s) { return (fn === rsec ? (2 - s) : s) * 90 * DEG; }
+  // The roads from which a drive can go on for ever without turning round: every road to a dead end,
+  // or into streets that only lead to dead ends, is struck out, again and again until none is left.
+  var LIVE = null;
+  function liveRoads(area) {
+    if (area.live) return area.live;
+    var succ = {}, all = [], live = {};
+    area.edges.forEach(function (e) {
+      [true, false].forEach(function (f) {
+        var h = H(e, f);
+        if (!okDir(h)) return;
+        var leg = legFrom(h), next = [];
+        if (leg.kind !== "dead") {
+          var fn = leg.kind === "round" ? rsec : jsec;
+          armsAt(leg.end, leg.hs[leg.hs.length - 1]).forEach(function (a) { if (a.ok && fn(a.rel) !== null) next.push(hk(a.h)); });
+        }
+        succ[hk(h)] = next; all.push(hk(h)); live[hk(h)] = true;
+      });
+    });
+    for (var changed = true; changed;) {
+      changed = false;
+      all.forEach(function (k) { if (live[k] && !succ[k].some(function (n) { return live[n]; })) { live[k] = false; changed = true; } });
+    }
+    return (area.live = live);
+  }
+  // The way the instructor picks: new streets first, bigger roads a little more, back towards the
+  // middle near the edge of the map, never into a dead end.
+  function weight(a, s) {
+    if (!a.ok || s === null) return 0;
+    if (!LIVE[hk(a.h)]) return 0;
+    var leg = legFrom(a.h);
+    var seen = 0;
+    leg.hs.forEach(function (x) { seen += x.e.seen; });
+    var w = (1 + 0.25 * a.h.e.rank) / (1 + 2 * seen);
+    var dc = Math.hypot(leg.end.x, leg.end.y);
+    if (dc > R_DRIVE - 250) w *= Math.max(0.03, (R_DRIVE - dc) / 250);
+    if (s === 0 || s === 2) w *= 1.4;
+    return w;
+  }
+  function choose(arms, fn) {
+    var c = arms.map(function (a) { var s = fn(a.rel); return { a: a, s: s, w: weight(a, s) }; }), tot = 0;
+    c.forEach(function (x) { tot += x.w; });
+    if (tot <= 0) {
+      c = c.filter(function (x) { return x.a.ok && x.s !== null; });
+      return c.length ? pick(c) : null;
+    }
+    var r = RND() * tot;
+    for (var i = 0; i < c.length; i++) { r -= c[i].w; if (r <= 0) return c[i]; }
+    return c[c.length - 1];
+  }
+  // One real road for each of the game's ways: the chosen one, else one we may drive, else the nearest.
+  function bySector(arms, fn, ch) {
+    var out = {};
+    arms.forEach(function (a) {
+      var s = fn(a.rel);
+      if (s === null) return;
+      var cur = out[s], m = secMid(fn, s);
+      if (ch && ch.a === a) { out[s] = a; return; }
+      if (cur && ch && ch.a === cur) return;
+      if (!cur || (a.ok && !cur.ok) || (a.ok === cur.ok && Math.abs(angDiff(a.rel, m)) < Math.abs(angDiff(cur.rel, m)))) out[s] = a;
+    });
+    return out;
+  }
+
+  // ---------- one leg as the game's steps ----------
+  function limitOf(t) {
+    var m = t.maxspeed || "";
+    if (/urban/i.test(m)) return 50;
+    if (/rural/i.test(m)) return 70;
+    var n = parseInt(m, 10);
+    if (n > 0) return /mph/.test(m) ? Math.round(n * 1.609) : n;
+    if (t.highway === "living_street" || /walk/i.test(m)) return 20;
+    return null;
+  }
+  // A road's name as signs show it: the street name, else the road number.
+  function nameOf(t) { return t.name || (t.ref ? "Väg " + t.ref.split(";")[0] : ""); }
+  function snap(v) { return Math.max(20, Math.min(110, Math.round(v / 10) * 10)); }
+  // Houses along the road, in the road's own terms: w along it, u sideways from the middle of the right lane.
+  function housesAlong(run, L, cutS, len) {
+    var S = [], cand = {}, out = [];
+    for (var w = 0; w <= len; w += 4) {
+      var a = pointAt(L, cutS + w - 4), b = pointAt(L, cutS + w + 4), q = pointAt(L, cutS + w), hd = headingOf(b.x - a.x, b.y - a.y);
+      S.push({ w: w, x: q.x, y: q.y, c: Math.cos(hd), s: Math.sin(hd) });
+      var gx = Math.floor(q.x / 60), gy = Math.floor(q.y / 60);
+      for (var i = -1; i <= 1; i++) for (var j = -1; j <= 1; j++) (run.area.grid[(gx + i) + "," + (gy + j)] || []).forEach(function (h) { cand[h.id] = h; });
+    }
+    Object.keys(cand).forEach(function (id) {
+      var h = cand[id], best = null, bd = 1e9;
+      if (run.prevUsed[id]) return;   // already beside the road before this one
+      S.forEach(function (sm) { var d = (h.cx - sm.x) * (h.cx - sm.x) + (h.cy - sm.y) * (h.cy - sm.y); if (d < bd) { bd = d; best = sm; } });
+      if (bd > 45 * 45) return;
+      var u0 = 1e9, u1 = -1e9, w0 = 1e9, w1 = -1e9;
+      h.pts.forEach(function (p) {
+        var dx = p.x - best.x, dy = p.y - best.y, u = dx * best.c + dy * best.s - 1.75, ww = best.w + dx * best.s - dy * best.c;
+        u0 = Math.min(u0, u); u1 = Math.max(u1, u); w0 = Math.min(w0, ww); w1 = Math.max(w1, ww);
+      });
+      // Clear of the road and the pavement: moved out a little if need be, left out if it stands on it.
+      if (u0 + u1 > 0) {
+        if (u0 < 4.9) { if (4.9 - u0 > 6) return; u1 += 4.9 - u0; u0 = 4.9; }
+        u1 = Math.min(u1, u0 + 30);
+      } else {
+        if (u1 > -8.2) { if (u1 + 8.2 > 6) return; u0 -= u1 + 8.2; u1 = -8.2; }
+        u0 = Math.max(u0, u1 - 30);
+      }
+      w0 = Math.max(w0, 1.5); w1 = Math.min(w1, len - 1.5);
+      if (w1 - w0 < 3 || u1 - u0 < 3) return;
+      run.used[id] = 1;
+      out.push({ t: "house", id: h.id, u: r1(u0), w: r1(w0), len: r1(w1 - w0), dep: r1(u1 - u0), h: h.h });
+    });
+    return out;
+  }
+  function legSteps(run, leg, startKind, offset) {
+    var cutS = startKind === "junction" ? run.jh : startKind === "round" ? run.rbArm : offset || 0;
+    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
+    var Lr = leg.line.len - cutS - cutE, len = Math.max(24, Math.round(Lr / DW) * DW), n = len / DW + 1;
+    // The bends: the heading every 2 m from the start, taken across 12 m so a corner becomes a curve.
+    var rel = [0], prev = 0;
+    for (var i = 0; i < n; i++) {
+      if (Lr < 24) { if (i) rel.push(0); continue; }
+      var t = cutS + i * DW, a = pointAt(leg.line, t - 6), b = pointAt(leg.line, t + 6), hd = headingOf(b.x - a.x, b.y - a.y);
+      if (i) rel.push(Math.round((rel[i - 1] + angDiff(hd, prev)) * 1e4) / 1e4);
+      prev = hd;
+    }
+    var main = leg.hs.reduce(function (m, x) { return x.e.len > m.e.len ? x : m; });
+    var lim = limitOf(main.e.tags), houses = Lr >= 24 ? housesAlong(run, leg.line, cutS, len) : [];
+    var dens = houses.length / Math.max(len, 60) * 100;
+    var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
+    var limit = snap(lim || (env === "stad" ? 50 : 70));
+    var road = { type: "road", len: len, bend: rel, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [] };
+    if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
+    if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
+    if (run.first) road.say.push([0, "Nu kör vi på riktiga gator" + (run.name ? " vid " + run.name.split(",")[0] : "") + ". Jag säger vart vi ska."]);
+    // Crossings, speed bumps and signals from the map.
+    var zeb = null, bumps = [], sig = null, P = leg.line.pts, C = leg.line.cum;
+    for (i = 0; i < P.length - 1; i++) {
+      var tg = P[i].tags;
+      if (!tg) continue;
+      var w = C[i] - cutS, toEnd = leg.line.len - C[i];
+      if (zeb === null && (tg.highway === "crossing" || tg.crossing) && !/traffic_signals|^no$|unmarked|informal/.test(tg.crossing || "") && w > 18 && w < len - 14) zeb = w;
+      if (/^(bump|hump|table|cushion)$/.test(tg.traffic_calming || "") && w > 12 && w < len - 12 && (!bumps.length || w - bumps[bumps.length - 1] > 25)) bumps.push(Math.round(w));
+      if (toEnd < 35 && leg.kind === "junction") {
+        if (tg.highway === "traffic_signals") sig = "ljus";
+        else if (tg.highway === "stop" && sig !== "ljus") sig = "stopp";
+        else if (tg.highway === "give_way" && !sig) sig = "vaj";
+      }
+    }
+    if (zeb !== null) { road.zebra = { s: Math.round(zeb), peds: RND() < 0.65 ? [{ side: pick(["right", "left"]) }] : [] }; road.signs.push({ s: Math.round(zeb) - 2, code: "B3" }); }
+    if (bumps.length) { road.bumps = bumps; road.say.push([Math.max(1, bumps[0] - 40), "Farthinder framåt, sakta in."]); }
+    // A sharp bend on a fast road: the instructor warns.
+    if (limit >= 60) {
+      for (i = 0; i + 30 < n; i += 5) if (Math.abs(rel[i + 30] - rel[i]) > 1.05) { road.say.push([Math.max(1, i * DW - 70), "Skarp kurva framåt. Sakta in före kurvan."]); break; }
+    }
+    if (main.e.ow === 0 && len > 90 && RND() < (env === "stad" ? 0.45 : 0.7)) road.oncoming = [Math.round(len * (0.2 + RND() * 0.4))];
+    if (env === "stad" && len > 130 && RND() < 0.12) road.ahead = [{ s: 40, v: 17, kind: "bike", ttl: len - 12 }];
+    leg.hs.forEach(function (x) { x.e.seen++; });
+    run.first = false; run.env = env; run.limit = limit; run.prevUsed = run.used; run.used = {};
+
+    var last = leg.hs[leg.hs.length - 1], steps = [road], jst = null;
+    if (leg.kind === "junction") {
+      var arms = armsAt(leg.end, last), ch = choose(arms, jsec);
+      if (ch) {
+        var by = bySector(arms, jsec, ch), ctrl = sig || ctrlAt(leg, last, arms);
+        var npcs = ctrl === "hoger" ? [{ from: "right", to: "straight" }] : ctrl === "huvud" ? [{ from: "right", to: "straight", prio: false }] :
+          ctrl === "ljus" ? [] : [{ from: "left", to: "straight", eta: 1.2 }, { from: "right", to: "straight", eta: 1.6 }];
+        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, real: { by: by, back: H(last.e, !last.f) } };
+        var bad = [];
+        [[1, "right"], [0, "fwd"], [-1, "left"]].forEach(function (x) { if (by[x[0]] && !by[x[0]].ok) bad.push(x[1]); });
+        if (bad.length) { jst.noEntry = bad; jst.armSigns = bad.map(function (nm) { return { arm: nm, code: "C1" }; }); }
+        var into = nameOf(ch.a.h.e.tags), on = into && into !== road.street ? (ch.s ? " in på " : ", in på ") + into : "";
+        road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + WORD[ch.s] + on + ". " + HINTS[ctrl]]);
+      }
+    } else if (leg.kind === "round") {
+      var arms2 = armsAt(leg.end, last), ch2 = choose(arms2, rsec);
+      if (ch2) {
+        jst = { type: "round", want: ch2.s, good: "Bra i cirkulationsplatsen!", npcs: RND() < 0.6 ? [{ from: "left", to: "right" }] : [],
+          real: { by: bySector(arms2, rsec, ch2), back: H(last.e, !last.f) } };
+        var out2 = nameOf(ch2.a.h.e.tags);
+        road.say.push([Math.max(1, len - 95), "I cirkulationsplatsen tar vi avfart nummer " + ch2.s + (out2 && out2 !== road.street ? " mot " + out2 : "") + "." +
+          (ch2.s === 1 ? " Blinka höger redan när du kör in." : " Blinka höger när du har passerat avfarten före.")]);
+      }
+    }
+    if (jst) steps.push(jst);
+    else {
+      road.finish = true;
+      road.say.push([Math.max(1, len - 60), (leg.end.edges.length <= 1 ? "Gatan tar slut här." : "Här tar kartan slut.") + " Stanna vid kanten, så är vi klara. Bra kört!"]);
+    }
+    return steps;
+  }
+  // Who goes first where this road meets the others: signals and signs from the map, else the size of the roads.
+  function ctrlAt(leg, last, arms) {
+    var v = leg.end, mine = last.e.rank, others = 0, sideYields = false, tg = (v.node && v.node.tags) || {};
+    arms.forEach(function (a) {
+      others = Math.max(others, a.h.e.rank);
+      var L = hline(a.h);
+      L.pts.forEach(function (q, i) { if (i && L.cum[i] < 35 && q.tags && /^(stop|give_way)$/.test(q.tags.highway || "")) sideYields = true; });
+    });
+    if (tg.highway === "traffic_signals") return "ljus";
+    if (/^(stop|give_way)$/.test(tg.highway || "")) return mine < others ? (tg.highway === "stop" ? "stopp" : "vaj") : "huvud";
+    if (sideYields) return "huvud";
+    if (mine >= 3 && others <= 2) return "huvud";
+    if (mine <= 2 && others >= 3) return "vaj";
+    return "hoger";
+  }
+
+  // ---------- a drive ----------
+  // The steps for a drive in the area: the first road, then one road and junction more each time the
+  // car leaves a junction (steps.onExit, called by the course when a junction or roundabout is decided).
+  function steps(area, opts) {
+    var run = { area: area, jh: opts.jh, rbArm: opts.rbArm, env: null, limit: null, used: {}, prevUsed: {}, name: area.name || "", first: true };
+    area.edges.forEach(function (e) { e.seen = 0; });
+    LIVE = liveRoads(area);
+    // Start on the street nearest the place.
+    var best = null, bd = 1e9;
+    area.edges.forEach(function (e) {
+      if (e.rank < 1 || e.len < 60 || !(LIVE[e.i * 2] || LIVE[e.i * 2 + 1])) return;
+      for (var i = 1; i < e.pts.length; i++) {
+        var a = e.pts[i - 1], b = e.pts[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-6;
+        var f = Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / l2)), x = a.x + dx * f, y = a.y + dy * f, d = Math.hypot(x, y);
+        if (d < bd) { bd = d; best = { e: e, t: e.lf.cum[i - 1] + Math.sqrt(l2) * f }; }
+      }
+    });
+    var out = [];
+    if (!best) return out;
+    var dirs = [true, false].filter(function (f) { return LIVE[hk(H(best.e, f))]; }), f = pick(dirs);
+    var h = H(best.e, f), leg = legFrom(h), off = f ? best.t : best.e.len - best.t;
+    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
+    off = Math.max(0, Math.min(off, leg.line.len - cutE - 80));
+    legSteps(run, leg, "start", off).forEach(function (s) { out.push(s); });
+    out.onExit = function (pc, course) {
+      var r = pc.st.real;
+      if (!r) return;
+      var k = pc.kind === "round" ? pc.exitK : pc.dir, arm = r.by[k];
+      if (!arm && pc.kind === "round" && k === 4) arm = { h: r.back };
+      if (!arm) {   // the game let the car out where the map has no road: the nearest real one
+        var ks = Object.keys(r.by).map(Number).sort(function (x, y) { return Math.abs(x - k) - Math.abs(y - k); });
+        arm = ks.length ? r.by[ks[0]] : { h: r.back };
+      }
+      course.steps.length = course.i;
+      legSteps(run, legFrom(arm.h), pc.kind === "round" ? "round" : "junction").forEach(function (s) { course.steps.push(s); });
+    };
+    return out;
+  }
+
+  window.RIKTIG = { search: search, load: load, steps: steps };
+})();

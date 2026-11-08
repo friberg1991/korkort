@@ -395,8 +395,8 @@
     return place(g, x, y, Math.random() * 6);
   }
   function house(api, pc, d, rnd) {
-    var c = api.toG(pc.P, d.u + d.dep / 2, d.w + d.len / 2);
-    var hgt = 5 + rnd * 5, g = new T.Group();
+    var c = pc.at(d.u + d.dep / 2, d.w + d.len / 2);
+    var hgt = d.h || 5 + rnd * 5, g = new T.Group();
     // A unit box stretched to size: houses vary, and one shared shape keeps memory flat on a long drive.
     var walls = mesh(box(1, 1, 1), mat(d.c), 0, hgt / 2, 0); walls.scale.set(d.dep, hgt, d.len); g.add(walls);
     var roof = mesh(new T.ConeGeometry(Math.SQRT1_2, 1, 4), mat(d.roof), 0, hgt + 1.1, 0);
@@ -418,15 +418,16 @@
     // Plinth and a chimney.
     var plinth = mesh(box(1, 1, 1), mat(0x77736e), 0, 0.25, 0); plinth.scale.set(d.dep + 0.1, 0.5, d.len + 0.1); g.add(plinth);
     g.add(mesh(box(0.7, 2.2, 0.7), mat(0x8a4b3a), d.dep * 0.18, hgt + 1.6, d.len * 0.25));
-    return place(g, c.x, c.y, pc.P.a);
+    return place(g, c.x, c.y, c.a);
   }
   function buildPiece(api, pc) {
     pc.built3d = true;
     var n = 0;
     (pc.decor || []).forEach(function (d) {
       n++;
-      if (d.t === "house") house(api, pc, d, (n * 0.37) % 1);
-      else if (d.t === "tree") { var q = api.toG(pc.P, d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
+      if (d.gone) return;
+      if (d.t === "house") d.obj = house(api, pc, d, (n * 0.37) % 1);
+      else if (d.t === "tree") { var q = pc.at(d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
     });
     if (pc.kind === "round") tree(pc.C.x, pc.C.y, 2.4);
     if (pc.kind === "road" || pc.kind === "mv") roadside(api, pc);
@@ -437,12 +438,12 @@
   // Street furniture along a piece: lamps in town, white edge posts on country roads,
   // the guard rail between the motorway's carriageways, a shelter at a bus stop.
   function roadside(api, pc) {
-    var L = pc.len, st = pc.st, at = function (u, w) { return api.toG(pc.P, u, w); };
+    var L = pc.len, st = pc.st, at = function (u, w) { return pc.at(u, w); };
     if (pc.kind === "mv") {
       var c = at(-8.4, L / 2), rail = new T.Group();
       rail.add(mesh(new T.BoxGeometry(0.1, 0.32, L), mat(0xc9c9c4), 0, 0.6, 0));
       for (var k = -L / 2 + 2; k < L / 2; k += 4) rail.add(mesh(box(0.12, 0.6, 0.12), mat(0x8a8e94), 0, 0.3, k));
-      place(rail, c.x, c.y, pc.P.a);
+      place(rail, c.x, c.y, c.a);
       return;
     }
     if (pc.env === "stad") {
@@ -453,7 +454,7 @@
         lamp.add(mesh(box(1.4, 0.08, 0.08), mat(0x55595e), -0.7, 5.95, 0));
         lamp.add(mesh(box(0.5, 0.12, 0.25), mat(0x3a3f45), -1.35, 5.88, 0));
         lamp.add(mesh(box(0.42, 0.03, 0.18), mat(0xfff3c4, true), -1.35, 5.81, 0));
-        place(lamp, q.x, q.y, pc.P.a);
+        place(lamp, q.x, q.y, q.a);
       }
     } else {
       // Kantstolpar: white posts with a black band, about every 50 m on both sides.
@@ -463,7 +464,7 @@
           post.add(mesh(box(0.12, 1.0, 0.12), mat(0xeceef0), 0, 0.5, 0));
           post.add(mesh(box(0.13, 0.18, 0.13), mat(0x1c1c1c), 0, 0.85, 0));
           post.add(mesh(box(0.05, 0.08, 0.02), mat(0xffa61e, true), 0, 0.72, 0.07));
-          place(post, q2.x, q2.y, pc.P.a + o[1]);
+          place(post, q2.x, q2.y, q2.a + o[1]);
         });
       }
     }
@@ -477,7 +478,7 @@
         o.add(mesh(box(0.55, 0.5, 0.7), mat(0xc9c9c4), 0, 3.3, 0));
         o.add(mesh(box(0.25, 0.25, 0.05), mat(0x15181c), 0, 3.3, 0.36));
       }
-      place(o, qp.x, qp.y, pc.P.a);
+      place(o, qp.x, qp.y, qp.a);
     });
     if (st.works) {
       for (var cw = st.works.s; cw <= st.works.s + st.works.len; cw += 4) {
@@ -489,12 +490,12 @@
       var qb = at(0.2, st.works.s), bar = new T.Group();
       for (var k = 0; k < 6; k++) bar.add(mesh(box(0.55, 0.3, 0.06), mat(k % 2 ? 0x111111 : 0xf8c628), -1.4 + k * 0.55, 0.9, 0));
       [-1.5, 1.4].forEach(function (x) { bar.add(mesh(box(0.06, 0.9, 0.06), mat(0xeceef0), x, 0.45, 0)); });
-      place(bar, qb.x, qb.y, pc.P.a);
+      place(bar, qb.x, qb.y, qb.a);
       var qd = at(0.3, st.works.s + st.works.len / 2), dig = new T.Group();
       dig.add(mesh(box(1.6, 1.0, 3.0), mat(0xf2b31b), 0, 0.9, 0));
       dig.add(mesh(box(1.2, 1.0, 1.2), mat(0x303a4a), 0, 1.9, 0.6));
       dig.add(mesh(box(0.25, 0.25, 2.6), mat(0xf2b31b), 0, 2.2, -1.6));
-      place(dig, qd.x, qd.y, pc.P.a + 0.3);
+      place(dig, qd.x, qd.y, qd.a + 0.3);
     }
     if (st.bus) {
       var b = at(7.2, st.bus.s), shelter = new T.Group();
@@ -502,7 +503,7 @@
       shelter.add(mesh(box(0.06, 2.3, 4.0), new T.MeshLambertMaterial({ color: 0x9fc3d6, transparent: true, opacity: 0.45 }), 0.75, 1.2, 0));
       [-1.95, 1.95].forEach(function (z) { shelter.add(mesh(box(1.5, 2.3, 0.06), new T.MeshLambertMaterial({ color: 0x9fc3d6, transparent: true, opacity: 0.45 }), 0, 1.2, z)); });
       shelter.add(mesh(box(0.5, 0.45, 2.6), mat(0x6b4a2f), 0.35, 0.45, 0));
-      place(shelter, b.x, b.y, pc.P.a);
+      place(shelter, b.x, b.y, b.a);
     }
   }
 
