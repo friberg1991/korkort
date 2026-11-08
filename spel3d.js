@@ -581,39 +581,194 @@
   }
 
   // ---------- road users ----------
+  // ---------- people, cyclists and animals ----------
+  // Built from rounded parts; arms and legs hang from pivots so they can swing when walking or
+  // running, and a cyclist's legs follow the pedals. Every figure faces -z, like the cars.
+  var UP = new T.Vector3(0, 1, 0), tubeGeos = {}, tv = new T.Vector3();
+  function V(x, y, z) { return new T.Vector3(x, y, z); }
+  function capsule(r, len) { var k = "cap" + r + "," + len; return geos[k] || (geos[k] = new T.CapsuleGeometry(r, len, 4, 10)); }
+  function ball(r) { var k = "ball" + r; return geos[k] || (geos[k] = new T.SphereGeometry(r, 14, 10)); }
+  // A round rod from a to b (a unit cylinder stretched and turned).
+  function tube(a, b, r, m) {
+    var o = new T.Mesh(tubeGeos[r] || (tubeGeos[r] = new T.CylinderGeometry(r, r, 1, 8)), m);
+    setTube(o, a, b); return o;
+  }
+  function setTube(o, a, b) {
+    tv.subVectors(b, a); var len = tv.length() || 0.001;
+    o.position.copy(a).addScaledVector(tv, 0.5); o.scale.set(1, len, 1);
+    o.quaternion.setFromUnitVectors(UP, tv.divideScalar(len));
+  }
+  // A limb hanging down from a pivot: parts are [radius, length, material], stacked downwards.
+  function limb(parent, x, y, z, parts) {
+    var piv = new T.Group(), yy = 0; piv.position.set(x, y, z); parent.add(piv);
+    parts.forEach(function (q) { var m = new T.Mesh(capsule(q[0], q[1]), q[2]); m.position.y = yy - q[1] / 2; piv.add(m); yy -= q[1]; });
+    return piv;
+  }
+  var SKIN = [0xe8c39e, 0xd9a77e, 0xb07a52, 0x8d5a3b, 0xf1d2b3], HAIR = [0x2a1d14, 0x5a3d26, 0xc9a35a, 0x1a1a1a, 0x8a5a3a, 0xb8b8b8],
+    LEGS = [0x2b3a55, 0x333840, 0x5a4a3a, 0x1d1f24, 0x6b6f76, 0x3a4a3a];
+  function pick(list, id, k) { return list[(id * 7 + (k || 0)) % list.length]; }
+  // A standing person about 1.75 m tall (scaled for a child), arms and legs on pivots.
+  function person(o) {
+    var g = new T.Group(), sh = soft(o.shirt), tr = soft(o.trousers), sk = soft(o.skin), shoe = soft(0x222428);
+    var legs = [-1, 1].map(function (sd) {
+      var l = limb(g, sd * 0.1, 0.92, 0, [[0.075, 0.42, tr], [0.065, 0.36, tr]]);
+      l.add(mesh(box(0.11, 0.08, 0.25), shoe, 0, -0.86, -0.05));
+      return l;
+    });
+    var pelvis = mesh(capsule(0.12, 0.14), tr, 0, 0.95, 0); pelvis.rotation.z = Math.PI / 2; pelvis.scale.z = 0.75; g.add(pelvis);
+    var torso = mesh(capsule(0.16, 0.3), sh, 0, 1.22, 0); torso.scale.set(1.12, 1, 0.68); g.add(torso);
+    g.add(mesh(cyl(0.05, 0.055, 0.1, 10), sk, 0, 1.57, 0));
+    var head = mesh(ball(0.105), sk, 0, 1.69, 0); head.scale.y = 1.1; g.add(head);
+    if (o.hair != null) { var hair = mesh(ball(0.11), soft(o.hair), 0, 1.72, 0.02); hair.scale.set(1, 0.85, 1); g.add(hair); }
+    [-0.037, 0.037].forEach(function (x) { g.add(mesh(ball(0.012), mat(0x1a1a1a), x, 1.7, -0.1)); });
+    var arms = [-1, 1].map(function (sd) {
+      var a = limb(g, sd * 0.205, 1.47, 0, [[0.052, 0.28, sh], [0.046, 0.25, sh]]);
+      a.add(mesh(ball(0.045), sk, 0, -0.58, 0)); a.rotation.z = sd * 0.07;
+      return a;
+    });
+    if (o.scale) g.scale.setScalar(o.scale);
+    g.userData.legs = legs; g.userData.arms = arms; g.userData.stride = 4.5 / (o.scale || 1); g.userData.swing = 0.5; g.userData.bob = true;
+    return g;
+  }
+  // A bicycle with its rider: diamond frame, tyres, bars and saddle; the rider leans forward and pedals.
+  function cyclist(n, col) {
+    var g = new T.Group(), frame = soft(pick([0x1f6fb2, 0xc0392b, 0x2e8b57, 0x222222, 0xd0d4d8], n.id)), dark = soft(0x1c1c1c), metal = soft(0xa7adb4);
+    [0.52, -0.52].forEach(function (z) {
+      var t = mesh(new T.TorusGeometry(0.31, 0.035, 8, 24), dark, 0, 0.34, z); t.rotation.y = Math.PI / 2; g.add(t);
+      [0, Math.PI / 2].forEach(function (a) { var sp = mesh(box(0.01, 0.6, 0.012), metal, 0, 0.34, z); sp.rotation.x = a; g.add(sp); });
+    });
+    var rear = V(0, 0.34, 0.52), front = V(0, 0.34, -0.52), bb = V(0, 0.3, 0.05), seat = V(0, 0.85, 0.2), headT = V(0, 0.9, -0.36), headB = V(0, 0.75, -0.4);
+    [[bb, seat], [bb, headB], [seat, headT], [bb, rear], [seat, rear], [headB, front], [headB, headT]].forEach(function (q) { g.add(tube(q[0], q[1], 0.022, frame)); });
+    g.add(tube(headT, V(0, 1.0, -0.38), 0.018, metal));
+    g.add(tube(V(-0.25, 1.0, -0.38), V(0.25, 1.0, -0.38), 0.016, metal));                 // handlebar
+    g.add(mesh(box(0.11, 0.04, 0.24), dark, 0, 0.9, 0.22));                                 // saddle
+    // The rider: torso leaning forward from the saddle, arms to the bar, a helmet.
+    var sh = soft(col), sk = soft(pick(SKIN, n.id)), tr = soft(pick(LEGS, n.id, 2));
+    var body = new T.Group(); body.position.set(0, 0.98, 0.22); body.rotation.x = -0.55; g.add(body);
+    var tor = mesh(capsule(0.15, 0.3), sh, 0, 0.3, 0); tor.scale.set(1.1, 1, 0.7); body.add(tor);
+    var hd = new T.Group(); hd.position.set(0, 0.62, 0); hd.rotation.x = 0.45; body.add(hd);
+    hd.add(mesh(ball(0.1), sk, 0, 0.06, 0));
+    var helm = mesh(new T.SphereGeometry(0.125, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), soft(0xf0c419), 0, 0.08, 0.02); helm.scale.z = 1.2; hd.add(helm);
+    var sx = Math.sin(-0.55), cx = Math.cos(-0.55);
+    [-1, 1].forEach(function (sd) {
+      var shoulder = V(sd * 0.18, 0.98 + 0.5 * cx, 0.22 + 0.5 * sx), grip = V(sd * 0.23, 1.0, -0.37);
+      g.add(tube(shoulder, grip, 0.045, sh)); g.add(mesh(ball(0.045), sk, grip.x, grip.y, grip.z));
+    });
+    // Legs from the hips to the pedals; updated each frame from the crank angle.
+    var crank = new T.Group(); crank.position.copy(bb); g.add(crank);
+    crank.add(mesh(box(0.03, 0.36, 0.03), metal, 0.06, 0, 0));
+    var legs = [-1, 1].map(function (sd) {
+      return { sd: sd, thigh: tube(V(0, 0, 0), V(0, -1, 0), 0.07, tr), shin: tube(V(0, 0, 0), V(0, -1, 0), 0.058, tr), foot: mesh(box(0.1, 0.07, 0.22), dark) };
+    });
+    legs.forEach(function (l) { g.add(l.thigh); g.add(l.shin); g.add(l.foot); });
+    var hip = V(0, 0.98, 0.22), pedal = V(), knee = V();
+    g.userData.pedal = function (ph) {
+      crank.rotation.x = ph;
+      legs.forEach(function (l) {
+        var a = ph + (l.sd > 0 ? Math.PI : 0);
+        hip.set(l.sd * 0.1, 0.98, 0.22);
+        pedal.set(l.sd * 0.12, bb.y + Math.cos(a) * 0.17, bb.z - Math.sin(a) * 0.17);
+        // Knee by two-bone reach: thigh and shin 0.45 m each, the knee bending forwards.
+        var dz = pedal.z - hip.z, dy = pedal.y - hip.y, d = Math.min(0.89, Math.sqrt(dz * dz + dy * dy)), h = Math.sqrt(Math.max(0, 0.2025 - d * d / 4));
+        var uz = dz / d, uy = dy / d, pz = uy, py = -uz;
+        if (pz > 0) { pz = -pz; py = -py; }
+        knee.set(l.sd * 0.11, hip.y + uy * d / 2 + py * h, hip.z + uz * d / 2 + pz * h);
+        setTube(l.thigh, hip, knee); setTube(l.shin, knee, pedal);
+        l.foot.position.set(pedal.x, pedal.y + 0.02, pedal.z - 0.04);
+      });
+    };
+    g.userData.pedal(0); g.userData.stride = 1.8;
+    return g;
+  }
+  // Four legs on pivots in the order front left, front right, rear left, rear right.
+  function quadLegs(g, xs, zFront, zRear, top, upper, lower, upMat, loMat, hoofMat) {
+    var legs = [];
+    [zFront, zRear].forEach(function (z) {
+      [-xs, xs].forEach(function (x) {
+        var l = limb(g, x, top, z, [[upper[0], upper[1], upMat], [lower[0], lower[1], loMat]]);
+        l.add(mesh(box(lower[0] * 2.4, 0.08, lower[0] * 2.8), hoofMat, 0, -(upper[1] + lower[1]) - lower[0], 0));
+        legs.push(l);
+      });
+    });
+    return legs;
+  }
+  // A bull moose: dark body with a high shoulder hump, long pale legs, a long drooping muzzle, the
+  // bell under the throat and broad palmate antlers.
+  function moose() {
+    var g = new T.Group(), coat = soft(0x3b2a1c), legC = soft(0x8a7660), dark = soft(0x1e1610), horn = soft(0xcbb48c);
+    var body = mesh(capsule(0.45, 1.3), coat, 0, 1.5, 0.05); body.rotation.x = Math.PI / 2; body.scale.set(0.85, 1, 1.05); g.add(body);
+    var hump = mesh(ball(0.42), coat, 0, 1.78, -0.45); hump.scale.set(0.85, 0.85, 1.15); g.add(hump);
+    var rump = mesh(ball(0.4), coat, 0, 1.55, 0.65); rump.scale.set(0.9, 0.95, 1); g.add(rump);
+    g.add(tube(V(0, 1.75, -0.7), V(0, 1.95, -1.15), 0.2, coat));                               // neck
+    var hd = new T.Group(); hd.position.set(0, 1.98, -1.2); hd.rotation.x = -0.45; g.add(hd);
+    var skull = mesh(capsule(0.15, 0.4), coat, 0, 0, -0.25); skull.rotation.x = Math.PI / 2; hd.add(skull);
+    var nose = mesh(ball(0.16), dark, 0, -0.03, -0.55); nose.scale.set(0.9, 1, 1.25); hd.add(nose);
+    [-1, 1].forEach(function (sd) {
+      hd.add(mesh(ball(0.025), mat(0x0a0a0a), sd * 0.12, 0.06, -0.18));                       // eyes
+      var ear = mesh(new T.ConeGeometry(0.06, 0.22, 6), coat, sd * 0.14, 0.17, 0.0); ear.rotation.z = -sd * 0.7; hd.add(ear);
+      // Antler: a flat palm out to the side with a row of tines along its edge.
+      var palm = mesh(ball(0.3), horn, sd * 0.42, 0.28, 0.02); palm.scale.set(1.1, 0.12, 0.7); palm.rotation.z = sd * 0.35; hd.add(palm);
+      for (var k = 0; k < 4; k++) { var tine = mesh(new T.ConeGeometry(0.03, 0.18, 5), horn, sd * (0.55 + k * 0.05), 0.42 + k * 0.03, -0.15 + k * 0.1); tine.rotation.z = -sd * 0.3; hd.add(tine); }
+      hd.add(tube(V(sd * 0.1, 0.12, 0.02), V(sd * 0.25, 0.22, 0.02), 0.035, horn));
+    });
+    g.add(mesh(capsule(0.05, 0.2), coat, 0, 1.62, -1.12));                                       // the bell under the throat
+    g.add(mesh(capsule(0.05, 0.1), coat, 0, 1.6, 1.05));                                         // short tail
+    g.userData.legs = quadLegs(g, 0.22, -0.55, 0.65, 1.26, [0.1, 0.55], [0.055, 0.6], coat, legC, dark);
+    g.userData.stride = 2.2; g.userData.swing = 0.55;
+    return g;
+  }
+  // A horse with its rider sitting up in the saddle, legs down each side, in a reflective vest.
+  function horse(n) {
+    var g = new T.Group(), coat = soft(pick([0x7a4a2a, 0x5a3520, 0x2a1d14, 0xb08a5a], n.id)), dk = soft(0x221710), sock = soft(0x2a2420);
+    var body = mesh(capsule(0.34, 1.05), coat, 0, 1.35, 0.05); body.rotation.x = Math.PI / 2; body.scale.set(0.82, 1, 1.05); g.add(body);
+    g.add(mesh(ball(0.36), coat, 0, 1.42, 0.62));                                                // hindquarters
+    g.add(tube(V(0, 1.5, -0.6), V(0, 2.0, -0.95), 0.16, coat));                                  // neck
+    var hd = new T.Group(); hd.position.set(0, 2.05, -1.0); hd.rotation.x = -0.9; g.add(hd);
+    var skull = mesh(capsule(0.11, 0.38), coat, 0, 0, -0.22); skull.rotation.x = Math.PI / 2; hd.add(skull);
+    hd.add(mesh(ball(0.1), dk, 0, -0.02, -0.45));                                                  // muzzle
+    [-1, 1].forEach(function (sd) {
+      hd.add(mesh(ball(0.02), mat(0x0a0a0a), sd * 0.09, 0.05, -0.12));
+      var ear = mesh(new T.ConeGeometry(0.035, 0.14, 6), coat, sd * 0.06, 0.13, 0.05); hd.add(ear);
+    });
+    var mane = tube(V(0, 1.7, -0.68), V(0, 2.12, -0.98), 0.05, dk); mane.position.z += 0.06; g.add(mane);
+    g.add(tube(V(0, 1.5, 0.95), V(0, 0.85, 1.12), 0.07, dk));                                    // tail
+    g.userData.legs = quadLegs(g, 0.18, -0.5, 0.62, 1.11, [0.085, 0.5], [0.05, 0.52], coat, sock, dk);
+    g.add(mesh(box(0.5, 0.08, 0.55), soft(0x4a2a18), 0, 1.68, -0.05));                            // saddle
+    // Rider.
+    var vest = soft(0xd8f02c), tr = soft(0x30343c), sk = soft(pick(SKIN, n.id, 1)), boot = soft(0x1a1a1a);
+    var tor = mesh(capsule(0.15, 0.3), vest, 0, 2.02, 0.0); tor.scale.set(1.1, 1, 0.7); g.add(tor);
+    g.add(mesh(ball(0.1), sk, 0, 2.48, -0.02));
+    var helm = mesh(new T.SphereGeometry(0.12, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), soft(0x2a2d33), 0, 2.5, 0.0); helm.scale.z = 1.15; g.add(helm);
+    [-1, 1].forEach(function (sd) {
+      g.add(tube(V(sd * 0.12, 1.75, 0.0), V(sd * 0.3, 1.5, -0.2), 0.07, tr));                  // thigh down the side
+      g.add(tube(V(sd * 0.3, 1.5, -0.2), V(sd * 0.3, 1.08, -0.05), 0.055, tr));                 // shin
+      g.add(mesh(box(0.1, 0.08, 0.24), boot, sd * 0.3, 1.04, -0.09));
+      g.add(tube(V(sd * 0.18, 2.24, -0.02), V(sd * 0.12, 1.9, -0.32), 0.045, vest));            // arms to the reins
+      g.add(mesh(ball(0.04), sk, sd * 0.12, 1.88, -0.34));
+    });
+    g.userData.stride = 2.0; g.userData.swing = 0.35;
+    return g;
+  }
   function makeNpc(n) {
     var g = new T.Group(), col = n.color || "#286ee0";
     if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
     if (n.mode !== "train") g.add(shadow(n.hw * 2 + 0.3, n.hl * 2 + 0.3));
+    var fig = null;
     if (n.kind === "officer") {
-      g.add(mesh(box(0.42, 0.75, 0.26), mat(0xd8f02c), 0, 1.15, 0));            // reflective vest
-      g.add(mesh(box(0.36, 0.78, 0.22), mat(0x1d2a4a), 0, 0.4, 0));
-      g.add(mesh(new T.IcosahedronGeometry(0.15, 0), mat(0xe8c39e), 0, 1.68, 0));
-      g.add(mesh(box(0.3, 0.1, 0.3), mat(0x1d2a4a), 0, 1.82, 0));               // cap
-      var arm = mesh(box(0.1, 0.65, 0.1), mat(0xd8f02c), 0.27, 1.75, 0); g.add(arm);   // arm raised: stop
-      g.userData.arm = arm;
+      fig = person({ shirt: 0xd8f02c, trousers: 0x1d2a4a, skin: pick(SKIN, n.id), hair: null });
+      fig.add(mesh(cyl(0.11, 0.115, 0.08, 14), mat(0x1d2a4a), 0, 1.79, 0));                 // cap
+      fig.add(mesh(box(0.22, 0.02, 0.1), mat(0x111111), 0, 1.76, -0.1));
+      fig.userData.raise = fig.userData.arms[1];                                            // the arm raised for stop
     } else if (n.kind === "ped" || n.kind === "child" || n.kind === "stroll") {
-      var h = n.kind === "child" ? 1.15 : 1.7;
-      g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
-      g.add(mesh(box(0.28, h * 0.45, 0.2), mat(0x333840), 0, h * 0.22, 0));
-      g.add(mesh(new T.IcosahedronGeometry(h * 0.1, 0), mat(0xe8c39e), 0, h * 0.93, 0));
+      var child = n.kind === "child";
+      fig = person({ shirt: col, trousers: pick(LEGS, n.id, 1), skin: pick(SKIN, n.id), hair: pick(HAIR, n.id, 3), scale: child ? 0.62 : 0.94 + (n.id % 3) * 0.03 });
+      if (child) fig.add(mesh(box(0.26, 0.3, 0.12), mat(0xd04a3a), 0, 1.28, 0.16));          // school bag
+    } else if (n.kind === "cyclist" || n.kind === "bike") {
+      fig = cyclist(n, col);
     } else if (n.kind === "horse") {
-      var coat = mat(0x7a4a2a), dk = mat(0x3a2414);
-      g.add(mesh(box(0.6, 0.7, 1.7), coat, 0, 1.3, 0.05));
-      var neck = mesh(box(0.3, 0.75, 0.35), coat, 0, 1.75, -0.85); neck.rotation.x = 0.55; g.add(neck);
-      g.add(mesh(box(0.26, 0.26, 0.6), coat, 0, 2.05, -1.2));
-      g.add(mesh(box(0.08, 0.5, 0.3), dk, 0, 1.95, -0.8));                                           // mane
-      var tail = mesh(box(0.1, 0.7, 0.12), dk, 0, 1.1, 0.95); tail.rotation.x = -0.35; g.add(tail);
-      [[-0.2, -0.6], [0.2, -0.6], [-0.2, 0.65], [0.2, 0.65]].forEach(function (l) { g.add(mesh(box(0.13, 1.0, 0.13), dk, l[0], 0.5, l[1])); });
-      g.add(mesh(box(0.34, 0.55, 0.26), mat(0xd8f02c), 0, 2.0, 0.1));                             // rider in a reflective vest
-      [-0.24, 0.24].forEach(function (x) { g.add(mesh(box(0.12, 0.55, 0.14), mat(0x30343c), x, 1.6, 0.0)); });
-      g.add(mesh(new T.IcosahedronGeometry(0.13, 1), mat(0xe8c39e), 0, 2.42, 0.08));
-      g.add(mesh(new T.SphereGeometry(0.15, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x2a2d33), 0, 2.46, 0.08));   // helmet
+      fig = horse(n);
     } else if (n.kind === "moose") {
-      g.add(mesh(box(0.9, 1.0, 2.4), mat(0x5b3a22), 0, 1.6, 0));
-      g.add(mesh(box(0.45, 0.6, 0.8), mat(0x4a2e1a), 0, 2.0, -1.5));
-      g.add(mesh(box(1.4, 0.1, 0.3), mat(0xc8b48a), 0, 2.4, -1.4));
-      [[-0.3, -0.9], [0.3, -0.9], [-0.3, 0.9], [0.3, 0.9]].forEach(function (l) { g.add(mesh(box(0.15, 1.1, 0.15), mat(0x3a2414), l[0], 0.55, l[1])); });
+      fig = moose();
     } else if (n.kind === "train" || n.kind === "tram") {
       var tram = n.kind === "tram";
       for (var k = 0; k < (n.cars || 4); k++) {
@@ -625,12 +780,6 @@
     } else if (n.kind === "cone") {
       g.add(mesh(cyl(0.03, 0.26, 0.75, 8), mat(0xff7a1a), 0, 0.38, 0));
       g.add(mesh(cyl(0.12, 0.17, 0.12, 8), mat(0xffffff), 0, 0.4, 0));
-    } else if (n.kind === "cyclist") {
-      [-0.55, 0.55].forEach(function (z) { var wh = mesh(cyl(0.34, 0.34, 0.05, 12), mat(0x1c1c1c), 0, 0.34, z); wh.rotation.z = Math.PI / 2; g.add(wh); });
-      g.add(mesh(box(0.05, 0.05, 1.0), mat(0x8a8e94), 0, 0.6, 0));
-      g.add(mesh(box(0.34, 0.6, 0.24), mat(col), 0, 1.25, 0.1));
-      g.add(mesh(box(0.2, 0.5, 0.2), mat(0x333840), 0, 0.75, 0.15));
-      g.add(mesh(new T.IcosahedronGeometry(0.13, 0), mat(0xf0c419), 0, 1.7, 0.05));
     } else {
       var L = n.hl * 2, Wd = n.hw * 2;
       var wheels = function (zs, r) {
@@ -654,12 +803,6 @@
         g.add(mesh(box(Wd, 3.2, L - 2.8), mat(0x9aa3b4), 0, 2.2, 1.4));
         g.add(mesh(box(Wd - 0.4, 0.15, 0.05), mat(0xd04030, true), 0, 0.9, n.hl + 0.01));
         wheels([-n.hl + 1.3, n.hl - 2.8, n.hl - 1.6], 0.5);
-      } else if (n.kind === "bike") {
-        [-0.55, 0.55].forEach(function (z) { var wh = mesh(cyl(0.34, 0.34, 0.05, 12), mat(0x1c1c1c), 0, 0.34, z); wh.rotation.z = Math.PI / 2; g.add(wh); });
-        g.add(mesh(box(0.05, 0.05, 1.0), mat(0x8a8e94), 0, 0.6, 0));
-        g.add(mesh(box(0.34, 0.6, 0.24), mat(col), 0, 1.25, 0.1));
-        g.add(mesh(box(0.2, 0.5, 0.2), mat(0x333840), 0, 0.75, 0.15));
-        g.add(mesh(new T.IcosahedronGeometry(0.13, 0), mat(0xf0c419), 0, 1.7, 0.05));
       } else if (n.kind === "tractor") {
         g.add(mesh(box(Wd - 0.6, 1.0, L), mat(0x2f8a3a), 0, 1.0, 0));
         g.add(mesh(box(Wd - 0.7, 1.3, 1.3), mat(0x303a4a), 0, 2.1, 0.5));
@@ -699,6 +842,7 @@
         return m;
       });
     }
+    if (fig) { g.add(fig); Object.assign(g.userData, fig.userData); }
     scene.add(g);
     return g;
   }
@@ -730,15 +874,29 @@
     g.add(mesh(box(n.hw * 2 - 0.14, 0.42, 0.1), paint(col), 0, 1.2, 0.1));            // middle pillar
     [-1, 1].forEach(function (sd) { g.add(mesh(box(0.16, 0.1, 0.12), paint(col), sd * (n.hw + 0.05), 1.0, -hl + 1.25)); });   // door mirrors
   }
-  function updateNpcs(api, G) {
+  function updateNpcs(api, G, dt) {
     var seen = {};
     G.npcs.forEach(function (n) {
       var g = npcMeshes[n.id] || (npcMeshes[n.id] = makeNpc(n));
       seen[n.id] = true;
       var pose = n.mode === "train" ? n.poly.at(n.t) : api.npcPose(n);
       g.position.x = pose.x; g.position.z = pose.y; g.rotation.y = -pose.a;
-      if (g.userData.arm) g.userData.arm.position.y = n.vu ? 1.1 : 1.75;
-      if (n.mode === "walk" && n.kind !== "moose" && (n.vu || n.vs)) g.position.y = Math.abs(Math.sin(G.t * 9)) * 0.05;
+      // Arms and legs: a walking swing in step with the speed, the pedals going round on a bike.
+      var ud = g.userData;
+      if (ud.raise) ud.raise.rotation.z = n.vu ? 0.07 : 2.75;
+      if (ud.legs || ud.pedal) {
+        var spd = n.mode === "walk" ? Math.abs(n.vu || 0) + Math.abs(n.vs || 0) : Math.abs(n.v || 0);
+        ud.ph = (ud.ph || 0) + spd * (dt || 0) * (ud.stride || 4.5);
+        if (ud.pedal) ud.pedal(ud.ph);
+        if (ud.legs) {
+          ud.amp = (ud.amp || 0) + (Math.min(1, spd / 1.2) * (ud.swing || 0.5) - (ud.amp || 0)) * Math.min(1, (dt || 0) * 6);
+          var sw = Math.sin(ud.ph) * ud.amp;
+          ud.legs[0].rotation.x = sw; ud.legs[1].rotation.x = -sw;
+          if (ud.legs[3]) { ud.legs[2].rotation.x = -sw; ud.legs[3].rotation.x = sw; }
+          if (ud.arms) { ud.arms[0].rotation.x = -sw * 0.8; ud.arms[1].rotation.x = ud.raise && !n.vu ? 0 : sw * 0.8; }
+          if (ud.bob) g.position.y = Math.abs(Math.sin(ud.ph)) * 0.07 * ud.amp;
+        }
+      }
       if (g.userData.brake) {
         var dv = (g.userData.lastV != null ? g.userData.lastV - n.v : 0);
         g.userData.lastV = n.v;
@@ -877,7 +1035,7 @@
     });
     updateRails(api, G);
     updateLights(api);
-    updateNpcs(api, G);
+    updateNpcs(api, G, dt);
     grass.position.x = p.x; grass.position.z = p.y;
     skyDome.position.set(p.x, 0, p.y); forest.position.set(p.x, 0, p.y);
     clouds.position.set(p.x * 0.85, 0, p.y * 0.85); clouds.rotation.y += dt * 0.004;
