@@ -66,6 +66,9 @@
     cockpit.add(mesh(box(2.6, 0.34, 0.75), dash, 0.35, -0.54, -0.88));
     cockpit.add(mesh(box(2.6, 0.05, 0.5), dashTop, 0.35, -0.38, -1.05));
     cockpit.add(mesh(box(0.6, 0.2, 0.28), dashTop, 0, -0.31, -0.88));
+    // A brushed-metal strip and a soft lighter panel across the dashboard.
+    cockpit.add(mesh(box(2.4, 0.012, 0.01), mat(0x9aa3ad), 0.35, -0.45, -0.505));
+    cockpit.add(mesh(box(2.4, 0.07, 0.01), mat(0x3b4148), 0.35, -0.5, -0.504));
     // Bonnet in front.
     cockpit.add(mesh(box(1.8, 0.12, 2.0), red, 0.35, -0.74, -2.25));
     // Instrument cluster behind the wheel: speed, limit and blinker arrows, drawn into a canvas.
@@ -103,7 +106,7 @@
     stalk = new T.Group(); stalk.position.set(-0.05, 0, -0.07); holder.add(stalk);
     stalk.add(mesh(box(0.15, 0.015, 0.015), mat(0x2c3136), -0.075, 0, 0));
     wheel = new T.Group(); holder.add(wheel);
-    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.03, 8, 24), mat(0x202326)));
+    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.03, 12, 40), mat(0x202326)));
     [0, 2.0, -2.0].forEach(function (a) {
       var sp = mesh(box(0.05, 0.15, 0.02), mat(0x34393f), Math.sin(a) * 0.1, -Math.cos(a) * 0.1, 0);
       sp.rotation.z = a; wheel.add(sp);
@@ -212,10 +215,24 @@
     g.add(mesh(new T.CylinderGeometry(0.15, 0.22, 1.6, 5), mat(0x6b4a2f), 0, 0.8, 0));
     if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
     var sh = new T.Mesh(new T.CircleGeometry(r * 0.9, 8), shadowMat); sh.rotation.x = -Math.PI / 2; sh.position.set(0.4, 0.03, 0.4); g.add(sh);
-    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(snowy ? 0x4a6650 : (Math.random() < 0.5 ? 0x3f6e30 : 0x4d7a35)), 0, 1.4 + r * 0.8, 0);
+    if (Math.random() < 0.4) {
+      // A spruce: three stacked cones, white tips in winter.
+      var dark = snowy ? 0x3d5a46 : 0x2f5a34;
+      for (var k = 0; k < 3; k++) {
+        var cr = r * (1.05 - k * 0.28), ch = r * 1.3;
+        g.add(mesh(cyl(0.01, cr, ch, 7), mat(k === 2 && snowy ? 0xf2f5f7 : dark), 0, 1.2 + k * r * 0.75 + ch / 2, 0));
+      }
+      return place(g, x, y, Math.random() * 6);
+    }
+    var tone = [0x3f6e30, 0x4d7a35, 0x5a8a3a, 0x46733a][Math.floor(Math.random() * 4)];
+    var top = mesh(new T.IcosahedronGeometry(r, 0), mat(snowy ? 0x4a6650 : tone), 0, 1.4 + r * 0.8, 0);
     if (snowy) { var cap = mesh(new T.IcosahedronGeometry(r * 0.75, 0), mat(0xf2f5f7), 0, 1.4 + r * 1.35, 0); cap.scale.y = 0.6; g.add(cap); }
     top.scale.y = 1.25; g.add(top);
-    return place(g, x, y, 0);
+    if (!snowy) {   // a second, smaller crown so the tree is less round
+      var top2 = mesh(new T.IcosahedronGeometry(r * 0.6, 0), mat(tone), r * 0.45, 1.6 + r * 1.2, -r * 0.2);
+      top2.scale.y = 1.2; g.add(top2);
+    }
+    return place(g, x, y, Math.random() * 6);
   }
   function house(api, pc, d, rnd) {
     var c = api.toG(pc.P, d.u + d.dep / 2, d.w + d.len / 2);
@@ -223,12 +240,23 @@
     g.add(mesh(box(d.dep, hgt, d.len), mat(d.c), 0, hgt / 2, 0));
     var roof = mesh(new T.ConeGeometry(Math.SQRT1_2, 1, 4), mat(d.roof), 0, hgt + 1.1, 0);
     roof.rotation.y = Math.PI / 4; roof.scale.set(d.dep, 2.2, d.len); g.add(roof);
-    // A few windows on the road side.
-    var side = d.u > 0 ? -1 : 1, win = mat(0x34404e);
-    for (var k = -d.len / 2 + 2; k < d.len / 2 - 1.5; k += 3.2) {
-      g.add(mesh(box(0.05, 1.1, 1.3), win, side * (d.dep / 2 + 0.03), hgt * 0.55, k));
-      if (hgt > 7) g.add(mesh(box(0.05, 1.1, 1.3), win, side * (d.dep / 2 + 0.03), hgt * 0.85 - 0.3, k));
+    // Windows with white frames on the road side; some are lit after dark.
+    var side = d.u > 0 ? -1 : 1, win = mat(0x34404e), lit = mat(0xffd98a, true), frame = mat(0xeeeae0), fx = side * (d.dep / 2 + 0.02);
+    function addWin(y, z) {
+      g.add(mesh(box(0.04, 1.3, 1.5), frame, fx, y, z));
+      g.add(mesh(box(0.05, 1.1, 1.3), night && Math.random() < 0.45 ? lit : win, fx + side * 0.02, y, z));
     }
+    var doorAt = Math.round((rnd - 0.5) * (d.len - 4) / 3.2) * 3.2;
+    for (var k = -d.len / 2 + 2; k < d.len / 2 - 1.5; k += 3.2) {
+      if (Math.abs(k - doorAt) < 1.6 && d.len > 6) {
+        g.add(mesh(box(0.06, 2.1, 1.1), mat(0x5a3a26), fx + side * 0.02, 1.05, k));   // door
+        g.add(mesh(box(0.5, 0.12, 1.5), mat(0x9a9590), fx + side * 0.25, 0.06, k));   // step
+      } else addWin(1.8, k);
+      if (hgt > 6) addWin(hgt * 0.72, k);
+    }
+    // Plinth and a chimney.
+    g.add(mesh(box(d.dep + 0.1, 0.5, d.len + 0.1), mat(0x77736e), 0, 0.25, 0));
+    g.add(mesh(box(0.7, 2.2, 0.7), mat(0x8a4b3a), d.dep * 0.18, hgt + 1.6, d.len * 0.25));
     return place(g, c.x, c.y, pc.P.a);
   }
   function buildPiece(api, pc) {

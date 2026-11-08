@@ -61,6 +61,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   line-height: 1;
 }
 .icon-btn.on { border-color: var(--accent); }
+.drive-btn {
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0cd29d, #0aa57c);
+  color: #06231a;
+  font-weight: 700;
+  font-size: 15px;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(12, 210, 157, 0.25);
+}
+.drive-btn:active { filter: brightness(0.9); }
 .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #070a0d; }
 #fill { height: 100%; width: 0; background: var(--accent); transition: width 0.4s ease; }
 
