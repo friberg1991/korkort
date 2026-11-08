@@ -245,7 +245,7 @@
     this.id = nextId++; this.mode = "path"; this.kind = o.kind || "car"; this.s = o.s; this.d = o.d || 0; this.td = this.d;
     this.dir = o.dir || 1; this.v = o.v != null ? o.v : 0; this.vt = o.vt != null ? o.vt : this.v; this.color = o.color || pickColor();
     this.vtAt = o.vtAt || null; this.blink = 0; this.siren = this.kind === "amb"; this.parked = !!o.parked; this.ttl = o.ttl || 0;
-    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35], police: [2.3, 0.92], cone: [0.25, 0.25] }[this.kind];
+    var dims = { car: [2.2, 0.9], bus: [6, 1.25], truck: [7.5, 1.25], amb: [2.8, 1.0], tractor: [2.0, 1.1], bike: [0.9, 0.35], horse: [1.2, 0.4], police: [2.3, 0.92], cone: [0.25, 0.25] }[this.kind];
     this.yaw = o.yaw || 0; if (o.blink) this.blink = o.blink;
     this.hl = dims[0]; this.hw = dims[1];
   }
@@ -366,6 +366,7 @@
     A39: "Kryssmärket sitter vid själva järnvägskorsningen."
   };
   var SITUATION_FACTS = {
+    horse: "Hästar är flyktdjur. Gasa inte hårt och tuta inte nära en häst, och ge den gott om plats.",
     round: "Du behöver inte blinka när du kör in i en cirkulationsplats, men du ska blinka höger när du kör ut.",
     mv: "Ett fordon måste kunna köra i minst 40 km/h för att få köra på motorväg.",
     mv2: "Omkörning görs till vänster. I tät kö får det ändå gå fortare i högra körfältet än i det vänstra.",
@@ -420,6 +421,7 @@
     if (pc.st.police && p.s - pc.s0 > pc.st.police.s + 10) wantFact(SITUATION_FACTS.police);
     if (pc.st.accident && p.s - pc.s0 > pc.st.accident.s + pc.st.accident.len + 15) wantFact(SITUATION_FACTS.accident);
     if (G.npcs.some(function (n) { return n.kind === "bike" && n.s - p.s < 80 && n.s > p.s + 30; })) wantFact(SITUATION_FACTS.bike);
+    if (G.npcs.some(function (n) { return n.kind === "horse" && n.s - p.s < 90 && n.s > p.s + 30; })) wantFact(SITUATION_FACTS.horse);
     if (G.factNext && G.t - G.factNext.at > 25) G.factNext = null;
     if (!G.factNext && G.t > 30 && G.t - G.lastFact > 70) {
       var left = GENERAL_FACTS.filter(function (f) { return !G.factShown[f]; });
@@ -447,6 +449,9 @@
 
   // ---------- faults ----------
   var FAULT_INFO = {
+    reverse: "På motorväg och motortrafikled är det förbjudet att vända och backa.",
+    shoulder: "Innan du byter körfält: titta i backspegeln och sidospegeln och gör en skuldertitt över axeln. Speglarna ser inte döda vinkeln snett bakom bilen.",
+    horse: "Hästar kan bli rädda av ljud och snabba rörelser. Sakta in och kör förbi med stort avstånd i sidled.",
     speed: "Håll hastighetsgränsen. Skylten gäller från där den står, så sakta in innan du når den.",
     yield: "Du hade väjningsplikt. Den som har väjningsplikt ska sakta in eller stanna i god tid och låta den andra köra först.",
     stop: "Vid stopplikt ska bilen stå helt still vid stopplinjen, även om ingen kommer.",
@@ -534,7 +539,7 @@
   function toggleGear() {
     if (!G || !G.manual || Math.abs(G.p.v) > 0.5) return;
     G.p.gear = G.p.gear === "R" ? "D" : "R"; tick(0.8);
-    say(G.p.gear === "R" ? "Backen i. Gasa försiktigt, titta i speglarna." : "Framåt igen.");
+    say(G.p.gear === "R" ? "Backen i. Håll pil ned för att backa, och titta bakåt." : "Framåt igen.");
   }
   document.getElementById("rv").addEventListener("pointerdown", function (e) { e.preventDefault(); toggleGear(); });
   function toggleHigh() { if (!G || G.lesson.weather !== "night") return; G.p.high = !G.p.high; tick(0.6); }
@@ -583,7 +588,7 @@
     if (st.popup && t > st.popup.s - 40 && t < st.popup.s + 20) out.push(-3.5);
     if (st.park && t > st.park.zone[0] - 20) out.push(3.0);
     // Room to pass a cyclist: half a lane out to the left.
-    if (pc.kind === "road" && G.npcs.some(function (n) { return n.kind === "bike" && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
+    if (pc.kind === "road" && G.npcs.some(function (n) { return (n.kind === "bike" || n.kind === "horse") && n.s > G.p.s - 6 && n.s - G.p.s < 60; })) out.push(-1.7);
     return out;
   }
 
@@ -592,10 +597,27 @@
     G.t += dt;
     // Pedals.
     var a;
+    // Backing with the down arrow (the brake pedal on the phone): standing still, press it again and
+    // hold, and the car shifts into reverse. Braking to a stop and keeping it held does not. In
+    // reverse the up arrow brakes, and held at a standstill shifts back to drive. Manual steering only.
+    var still = Math.abs(p.v) < 0.3;
+    if (keys.brake && !G.brakeWas) G.revArm = still && p.gear !== "R";
+    if (!keys.brake) G.revArm = false;
+    G.brakeWas = keys.brake;
+    if (G.manual && G.revArm && keys.brake && still) {
+      G.shiftT = (G.shiftT || 0) + dt;
+      if (G.shiftT > 0.5) {
+        p.gear = "R"; G.shiftT = 0; G.revArm = false; tick(0.8);
+        if (!G.revSaid) { G.revSaid = true; say("Backen i. Håll pil ned för att backa, och titta bakåt. Pil upp bromsar och tar dig framåt igen."); }
+      }
+    } else if (G.manual && p.gear === "R" && keys.gas && still) {
+      G.shiftT = (G.shiftT || 0) + dt;
+      if (G.shiftT > 0.3) { p.gear = "D"; G.shiftT = 0; tick(0.8); }
+    } else G.shiftT = 0;
     if (p.gear === "R") {
-      // Reverse: gas backs slowly, at most about 6 km/h.
-      if (keys.gas) p.v = Math.max(-1.7, p.v - 1.6 * dt);
-      else if (keys.brake) p.v = Math.min(0, p.v + 7.5 * G.grip * dt);
+      // Reverse: the down arrow backs slowly, at most about 6 km/h; the up arrow brakes.
+      if (keys.brake) p.v = Math.max(-1.7, p.v - 1.6 * dt);
+      else if (keys.gas) p.v = Math.min(0, p.v + 7.5 * G.grip * dt);
       else p.v = Math.min(0, p.v + 0.8 * dt);
       G.revT = (G.revT || 0) + dt; if (p.v < -0.2 && G.revT > 0.6) { G.revT = 0; beep(1200, 0.06, 0.03); }
     } else {
@@ -607,6 +629,7 @@
     if (G.manual) moveManual(dt);
     else moveOnPath(dt);
     p.stillT = Math.abs(p.v) < 0.3 ? p.stillT + dt : 0;
+    if (p.v < -0.4 && course.pieceAt(p.s).kind === "mv") fault("reverse", "Det är förbjudet att backa på motorväg.", true);
 
     // Pieces near the car: spawning, signals and rule checks.
     course.pieces.forEach(function (pc) {
@@ -789,6 +812,10 @@
       var dirC = lane > G.lane ? 1 : -1;
       if (p.blink !== dirC) fault("lane:" + pc.index, "Blinka innan du byter körfält eller kör ut för att köra om.", false);
       else p.blinkOffAt = G.t + 1.5;
+      var S3 = window.SPEL3D;
+      if (store.view3d && !touchUI && S3 && S3.looked && S3.ready() && !S3.looked(dirC, G.t - 5))
+        fault("shoulder:" + pc.index, dirC < 0 ? "Ingen skuldertitt åt vänster! Håll Z, eller dra med musen, och titta över axeln innan du byter körfält."
+          : "Ingen skuldertitt åt höger! Håll X, eller dra med musen, och titta över axeln innan du byter körfält.", false);
     }
     G.lane = lane; G.lanePiece = pc.index;
   }
@@ -858,13 +885,15 @@
       else G.glareT = 0;
       if (!meet && !p.high && p.v > 12 && !G.hbTip) { G.hbTip = true; say("Det är mörkt och fritt framåt. Slå på helljuset med H, eller den gula knappen, så ser du längre."); }
     }
-    // Passing a cyclist: keep well out to the side.
+    // Passing a cyclist or a rider: keep well out to the side, and slow down for the horse.
     G.npcs.forEach(function (n) {
-      if (n.kind !== "bike" || n.passedBy) return;
+      if ((n.kind !== "bike" && n.kind !== "horse") || n.passedBy) return;
       if (G.prevS < n.s && p.s >= n.s) {
         n.passedBy = true;
-        if (Math.abs(n.d - p.d) < 2.2) fault("bike:" + n.id, "För nära cyklisten! Kör om med ordentligt avstånd i sidled.", false);
-        else if (!n.praised) { n.praised = true; praise("Bra, du gav cyklisten gott om plats."); }
+        var horse = n.kind === "horse";
+        if (Math.abs(n.d - p.d) < (horse ? 2.6 : 2.2)) fault((horse ? "horse:" : "bike:") + n.id, horse ? "För nära hästen! Kör förbi med stort avstånd i sidled, hästar kan bli rädda." : "För nära cyklisten! Kör om med ordentligt avstånd i sidled.", false);
+        else if (horse && p.v * KMH > 45) fault("horse:" + n.id, "För fort förbi hästen! Sakta in ordentligt när du kör förbi en ryttare.", false);
+        else if (!n.praised) { n.praised = true; praise(horse ? "Bra, lugnt och med stort avstånd förbi hästen." : "Bra, du gav cyklisten gott om plats."); }
       }
     });
     // Speed bumps.
@@ -914,7 +943,7 @@
       pc.started = true;
       (st.ahead || []).forEach(function (a) {
         var vtAt = a.queue ? queueFn(pc, a) : a.brakeAt ? brakeFn(pc, a) : null;
-        var car = new PathCar({ s: pc.s0 + a.s, d: a.d != null ? a.d : a.kind === "bike" ? 1.15 : 0, v: a.v / KMH, kind: a.kind || "car", color: a.color, vtAt: vtAt, ttl: a.ttl ? pc.s0 + a.ttl : 0 });
+        var car = new PathCar({ s: pc.s0 + a.s, d: a.d != null ? a.d : a.kind === "bike" ? 1.15 : a.kind === "horse" ? 1.25 : 0, v: a.v / KMH, kind: a.kind || "car", color: a.color, vtAt: vtAt, ttl: a.ttl ? pc.s0 + a.ttl : 0 });
         if (a.brakeAt) car.suddenAt = pc.s0 + a.brakeAt;
         G.npcs.push(car);
       });
@@ -1402,9 +1431,9 @@
       }
       if (n.kind === "bus" && (n.busState === "wait" || n.busState === "signal")) vt = 0;
     }
-    if (n.ttl && (n.kind === "tractor" || n.kind === "bike")) {
-      // The tractor turns off onto a field road, the cyclist onto a side street.
-      if (n.s > n.ttl - 40) n.blink = 1;
+    if (n.ttl && (n.kind === "tractor" || n.kind === "bike" || n.kind === "horse")) {
+      // The tractor turns off onto a field road, the cyclist onto a side street, the rider onto a track.
+      if (n.s > n.ttl - 40 && n.kind !== "horse") n.blink = 1;
       if (n.s > n.ttl) { n.td = 6; vt = Math.min(vt, 3); }
       if (n.d > 5.9) n.gone = true;
     } else if (n.ttl && n.s > n.ttl && n.s - p.s > 140) n.gone = true;
@@ -1490,7 +1519,7 @@
         continue;
       }
       if (overlap(me, boxOf(n, npcPose(n)))) {
-        var what = { ped: "en gående", stroll: "en gående", cyclist: "en cyklist", cone: "hindret", officer: "polisen", police: "polisbilen", bike: "en cyklist", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
+        var what = { ped: "en gående", stroll: "en gående", cyclist: "en cyklist", cone: "hindret", officer: "polisen", police: "polisbilen", bike: "en cyklist", horse: "hästen", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
@@ -1756,6 +1785,13 @@
     var hl = n.hl, hw = n.hw, kind = n.kind;
     ctx.fillStyle = "rgba(0,0,0,0.25)"; rr(-hw + 0.15, -hl + 0.25, hw * 2, hl * 2, 0.5); ctx.fill();
     if (kind === "cone") { disc("#ff7a1a", 0, 0, 0.28); disc("#ffffff", 0, 0, 0.12); ctx.restore(); return; }
+    if (kind === "horse") {
+      ctx.fillStyle = "#3a2414"; ctx.fillRect(-0.04, 0.8, 0.08, 0.45);                                   // tail
+      ctx.fillStyle = "#7a4a2a"; ctx.beginPath(); ctx.ellipse(0, 0.15, 0.32, 0.85, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, -0.95, 0.15, 0.33, 0, 0, Math.PI * 2); ctx.fill();                  // neck and head
+      disc("#d8f02c", 0, 0.1, 0.27); disc("#2a2d33", 0, 0.02, 0.13);                                    // rider: vest, helmet
+      ctx.restore(); return;
+    }
     if (kind === "bike") {
       ctx.fillStyle = "#222"; ctx.fillRect(-0.05, -hl, 0.1, hl * 2);
       ctx.fillStyle = n.color; ctx.beginPath(); ctx.ellipse(0, 0.1, 0.32, 0.22, 0, 0, Math.PI * 2); ctx.fill();
@@ -2110,6 +2146,7 @@
     keepRight: [/körfält/], close: [/avstånd|sekund/], merge: [/accelerationsfält|påfart|motorväg/], accel: [/accelerationsfält|påfart/],
     exit: [/avfart|motorväg/], rail: [/järnväg|bom|tåg/], amb: [/utryckning/], bus: [/buss/], bike: [/cykl/], bump: [/farthinder/],
     lane: [/körfält|blink/], park: [/parker|stanna/], sign: [/vägmärke|påbud|förbud|infart/], overtake: [/omkör/], works: [/vägarbete|möt/],
+    reverse: [/backa|backning/], shoulder: [/döda vinkel|skuldertitt|backspegel|körfält/], horse: [/rid|häst/],
     police: [/polis/], accident: [/olycka|varningstriangel/], verge: [/vägren|varningstriangel/], glare: [/helljus|halvljus|bländ/]
   };
   function questionFor(kind, used) {
@@ -2283,6 +2320,8 @@
       else if (extra < 0.65) { road.len = 240; road.lanes = [0, -3.5]; road.accident = { s: 150, len: 22 }; road.props = [{ s: 100, u: 1.0, kind: "triangle" }]; road.oncoming = [20];
         road.say.push([60, "Varningstriangel! En olycka framför. Sakta in och låt mötande passera först."]); }
       else if (extra < 0.75) { road.camera = { s: 100 }; road.signs = [{ s: 20, code: "E24" }]; }
+      else if (extra < 0.85) { road.len = 240; road.signs = [{ s: 20, code: "A18" }]; road.ahead = [{ s: 130, v: 7, kind: "horse", ttl: 230 }]; road.oncoming = [40];
+        if (!exam) road.say.push([22, "Varning för ridande. Sakta in och kör förbi lugnt med stort avstånd."]); }
       var round = RND() < 0.3;
       var want;
       if (round) {
@@ -2337,6 +2376,8 @@
           say: [[8, "Här gäller 80. Ligger du bakom någon, håll minst tre sekunders avstånd."]] },
         { type: "road", len: 300, signs: [{ s: 20, code: "A19" }], moose: { s: 220 }, oncoming: [60],
           say: [[22, "Varning för djur. En älg kan springa ut, så var redo att bromsa."]] },
+        { type: "road", len: 260, signs: [{ s: 20, code: "A18" }], ahead: [{ s: 140, v: 7, kind: "horse", ttl: 250 }], oncoming: [30],
+          say: [[22, "Varning för ridande. Sakta in och kör förbi hästen lugnt och med stort avstånd, den kan bli rädd."]] },
         { type: "road", len: 340, lanes: [0, -3.5], solid: [[270, 340]], ahead: [{ s: 70, v: 25, kind: "tractor", ttl: 330 }], oncoming: [10, 120],
           say: [[5, "Traktorn kör sakta. Kör om när det är fritt framåt: blinka vänster, kör förbi och blinka höger tillbaka. Aldrig över heldragen linje."]] },
         { type: "road", len: 170, limit: 70, signs: [{ s: 6, speed: 70 }],
@@ -2448,6 +2489,18 @@
           say: [[70, "En bil har fått motorstopp på vägrenen. Sakta in och ge den gott om plats."]] },
         { type: "road", len: 150, finish: true, say: [[10, "Det var en händelserik tur! Stanna här vid kanten."]] }
       ] },
+    { id: "filbyte", icon: "👀", name: "Filbyte och döda vinkeln", what: "Speglar, blinker och skuldertitt innan du byter körfält", start: { s: 8, v: 50, d: 3.5 },
+      steps: [
+        { type: "mv", env: "mv", limit: 110, len: 330, acc: 230, signs: [{ s: 4, code: "E1" }, { s: 140, speed: 110 }],
+          ahead: [{ s: -40, v: 95 }, { s: 60, v: 95 }, { s: 150, v: 95 }, { s: 240, v: 95 }],
+          say: [[0, "Före varje filbyte: backspegel, sidospegel, blinker och en skuldertitt över axeln. På datorn i 3D håller du Z för vänster och X för höger."],
+                [110, "Blinka vänster, titta över vänster axel och glid in i en lucka."]] },
+        { type: "mv", len: 620, ahead: [{ s: 240, v: 78, kind: "truck" }], behind: [{ at: 90, d: -3.5, v: 120, back: 60 }, { at: 200, d: -3.5, v: 118, back: 40 }],
+          say: [[10, "Lastbilen framför kör långsamt. En bil kan ligga snett bakom dig där speglarna inte ser, i döda vinkeln. Titta över axeln innan du kör ut."],
+                [430, "När du är förbi: blinka höger, titta över höger axel och kör tillbaka."]] },
+        { type: "mv", len: 420, dec: [220, 410],
+          say: [[20, "Nu tar vi avfarten. Byt till högra körfältet: spegel, blinker och skuldertitt åt höger."]] }
+      ] },
     { id: "natt", icon: "🌙", name: "Mörkerkörning", what: "Halvljus och helljus, blända av för mötande, fotgängare utan reflex", weather: "night",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 180, signs: [{ s: 8, speed: 50 }],
@@ -2497,7 +2550,7 @@
     { id: "parkering", icon: "🅿️", name: "Parkering och backning", what: "Fickparkera mellan två bilar med backen", manual: true, reverse: true,
       steps: [
         { type: "road", env: "stad", limit: 30, len: 120, signs: [{ s: 8, speed: 30 }],
-          say: [[0, "Nu ska vi fickparkera. Du styr själv, och backen läggs i med R eller R-knappen när bilen står still."],
+          say: [[0, "Nu ska vi fickparkera. Du styr själv. Backa gör du så här: stå still, tryck pil ned igen och håll kvar, så läggs backen i. Pil upp bromsar och tar dig framåt igen. R eller R-knappen fungerar också."],
                 [60, "Kör fram och stanna bredvid bilen som står framför luckan till höger."]] },
         { type: "road", len: 200, parking: true, parked: [40, 50.5, 61, 75, 85.5], pocket: [61, 75],
           say: [[50, "Luckan är mellan den tredje och fjärde bilen. Stanna när din bil är i höjd med den fjärde bilen, lägg i backen och vrid åt höger. När bilen står snett in, vrid åt vänster och räta upp."]] }

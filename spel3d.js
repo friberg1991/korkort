@@ -13,7 +13,7 @@
   var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
   var camA = 0, wheelA = 0, prevA = null, failed = false;
   // Looking around: the rig is the car's seat, the camera the driver's head turned by dragging the mouse.
-  var rig, lookY = 0, lookP = 0, dragging = null, lookKey = 0, lookHeld = 0, NECK = 0.09;
+  var rig, lookY = 0, lookP = 0, dragging = null, lookKey = 0, lookHeld = 0, NECK = 0.09, lastLook = { "-1": -99, "1": -99 };
   var mats = {}, geos = {};
 
   function mat(color, basic) {
@@ -597,6 +597,18 @@
       g.add(mesh(new T.CylinderGeometry(0.2, 0.24, h * 0.62, 6), mat(col), 0, h * 0.45 + h * 0.31 - h * 0.3, 0));
       g.add(mesh(box(0.28, h * 0.45, 0.2), mat(0x333840), 0, h * 0.22, 0));
       g.add(mesh(new T.IcosahedronGeometry(h * 0.1, 0), mat(0xe8c39e), 0, h * 0.93, 0));
+    } else if (n.kind === "horse") {
+      var coat = mat(0x7a4a2a), dk = mat(0x3a2414);
+      g.add(mesh(box(0.6, 0.7, 1.7), coat, 0, 1.3, 0.05));
+      var neck = mesh(box(0.3, 0.75, 0.35), coat, 0, 1.75, -0.85); neck.rotation.x = 0.55; g.add(neck);
+      g.add(mesh(box(0.26, 0.26, 0.6), coat, 0, 2.05, -1.2));
+      g.add(mesh(box(0.08, 0.5, 0.3), dk, 0, 1.95, -0.8));                                           // mane
+      var tail = mesh(box(0.1, 0.7, 0.12), dk, 0, 1.1, 0.95); tail.rotation.x = -0.35; g.add(tail);
+      [[-0.2, -0.6], [0.2, -0.6], [-0.2, 0.65], [0.2, 0.65]].forEach(function (l) { g.add(mesh(box(0.13, 1.0, 0.13), dk, l[0], 0.5, l[1])); });
+      g.add(mesh(box(0.34, 0.55, 0.26), mat(0xd8f02c), 0, 2.0, 0.1));                             // rider in a reflective vest
+      [-0.24, 0.24].forEach(function (x) { g.add(mesh(box(0.12, 0.55, 0.14), mat(0x30343c), x, 1.6, 0.0)); });
+      g.add(mesh(new T.IcosahedronGeometry(0.13, 1), mat(0xe8c39e), 0, 2.42, 0.08));
+      g.add(mesh(new T.SphereGeometry(0.15, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x2a2d33), 0, 2.46, 0.08));   // helmet
     } else if (n.kind === "moose") {
       g.add(mesh(box(0.9, 1.0, 2.4), mat(0x5b3a22), 0, 1.6, 0));
       g.add(mesh(box(0.45, 0.6, 0.8), mat(0x4a2e1a), 0, 2.0, -1.5));
@@ -657,14 +669,16 @@
         });
       } else {
         var body = n.kind === "amb" ? "#f0e040" : n.kind === "police" ? "#f2f4f6" : col;
-        g.add(mesh(box(Wd, 0.75, L), mat(body), 0, 0.6, 0));
+        carBody(g, n, body);
         [-1, 1].forEach(function (sd) { g.add(mesh(box(0.34, 0.14, 0.05), mat(0xfff6d0, true), sd * (n.hw - 0.28), 0.72, -n.hl - 0.01)); });
         g.add(mesh(box(Wd - 0.7, 0.12, 0.04), mat(0x1c1f23), 0, 0.5, -n.hl - 0.01));   // grille
-        g.add(mesh(box(Wd - 0.15, 0.6, L * 0.5), mat(body), 0, 1.25, 0.15));
-        g.add(mesh(box(Wd - 0.13, 0.42, L * 0.46), mat(0x303a4a), 0, 1.25, 0.15));
+        g.add(mesh(box(Wd - 0.1, 0.16, 0.08), mat(0x2a2d31), 0, 0.36, -n.hl + 0.01));  // bumpers
+        g.add(mesh(box(Wd - 0.1, 0.16, 0.08), mat(0x2a2d31), 0, 0.36, n.hl - 0.01));
         [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (w) {
-          var wh = mesh(new T.CylinderGeometry(0.33, 0.33, 0.22, 8), mat(0x1c1c1c), w[0] * (n.hw - 0.08), 0.33, w[1] * (n.hl - 0.8));
+          var wh = mesh(cyl(0.33, 0.33, 0.22, 16), mat(0x1c1c1c), w[0] * (n.hw - 0.08), 0.33, w[1] * (n.hl - 0.8));
           wh.rotation.z = Math.PI / 2; g.add(wh);
+          var rim = mesh(cyl(0.19, 0.19, 0.24, 12), mat(0xb8bec6), w[0] * (n.hw - 0.08), 0.33, w[1] * (n.hl - 0.8));
+          rim.rotation.z = Math.PI / 2; g.add(rim);
         });
         g.userData.brake = new T.MeshBasicMaterial({ color: 0x7a2018 });
         g.add(mesh(box(Wd - 0.3, 0.12, 0.05), g.userData.brake, 0, 0.75, n.hl + 0.01));   // rear lights, bright when braking
@@ -687,6 +701,34 @@
     }
     scene.add(g);
     return g;
+  }
+  // A car body seen from the side, pushed out across the width with rounded edges: bonnet, glass
+  // all round (windscreen, side and rear windows) under a roof in the body colour, and door mirrors.
+  var paints = {}, carGeos = {};
+  function paint(c) { return paints[c] || (paints[c] = new T.MeshPhongMaterial({ color: c, specular: 0x666666, shininess: 70 })); }
+  function carBody(g, n, col) {
+    var hl = n.hl - 0.06, hw = n.hw - 0.06, k = hl + "," + hw;
+    if (!carGeos[k]) {
+      var ext = function (pts, depth, bev) {
+        var sh = new T.Shape(); sh.moveTo(pts[0][0], pts[0][1]);
+        for (var i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
+        var geo = new T.ExtrudeGeometry(sh, { depth: depth, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 2 });
+        geo.translate(0, 0, -depth / 2); return geo;
+      };
+      // Shape x is -z (the car's front is at z = -hl): a quarter turn about y puts the push across the width.
+      var lo = 0.3, belt = 0.98, roof = 1.42, f = hl, r = -hl;
+      carGeos[k] = {
+        body: ext([[f, lo], [f, 0.74], [f - 0.2, 0.86], [f - 1.15, belt], [r + 0.5, belt + 0.02], [r, 0.9], [r, lo]], hw * 2 - 0.08, 0.06),
+        glass: ext([[f - 1.1, belt], [f - 1.85, roof - 0.02], [r + 1.15, roof - 0.02], [r + 0.55, belt]], hw * 2 - 0.26, 0.04),
+        roof: ext([[f - 1.83, roof - 0.04], [r + 1.17, roof - 0.04], [r + 1.2, roof + 0.02], [f - 1.86, roof + 0.02]], hw * 2 - 0.24, 0.03)
+      };
+    }
+    var G3 = carGeos[k], glass = paint(0x26303c);
+    [[G3.body, paint(col)], [G3.glass, glass], [G3.roof, paint(col)]].forEach(function (q) {
+      var m = new T.Mesh(q[0], q[1]); m.rotation.y = Math.PI / 2; g.add(m);
+    });
+    g.add(mesh(box(n.hw * 2 - 0.14, 0.42, 0.1), paint(col), 0, 1.2, 0.1));            // middle pillar
+    [-1, 1].forEach(function (sd) { g.add(mesh(box(0.16, 0.1, 0.12), paint(col), sd * (n.hw + 0.05), 1.0, -hl + 1.25)); });   // door mirrors
   }
   function updateNpcs(api, G) {
     var seen = {};
@@ -812,7 +854,7 @@
     if (failed) return;
     var api = window.SPEL.api;
     canvas.style.display = "";
-    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; camA = G.p.a; setWeather(G.lesson.weather); }
+    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; lastLook = { "-1": -99, "1": -99 }; camA = G.p.a; setWeather(G.lesson.weather); }
     var p = G.p;
     // The ground texture follows the car, centred a little ahead.
     var fx = Math.sin(p.a), fy = -Math.cos(p.a);
@@ -859,6 +901,7 @@
       lookY += (lookKey * (lookHeld < 0.45 ? 1.45 : 2.35) - lookY) * Math.min(1, dt * 7);
     } else if (!dragging) { var back = Math.min(1, dt * 4); lookY -= lookY * back; lookP -= lookP * back; }
     // The head turns about the neck, a little behind the eyes, and looks slightly down at the road.
+    if (Math.abs(lookY) > 1.1) lastLook[lookY < 0 ? -1 : 1] = G.t;
     camera.rotation.set(-0.1 + lookP, -lookY, 0);
     camera.position.set(Math.sin(lookY) * NECK, 0, NECK - Math.cos(lookY) * NECK);
     // Steering wheel turns with how fast the car turns.
@@ -881,6 +924,8 @@
     ready: function () { if (!renderer && !failed) init(); return !failed; },
     render: render,
     hide: function () { if (canvas) canvas.style.display = "none"; },
-    look: function (y, p) { lookY = y; lookP = p || 0; }   // for the scripted test bots
+    look: function (y, p) { lookY = y; lookP = p || 0; },   // for the scripted test bots
+    // Whether the driver looked over that shoulder (-1 left, 1 right) since game time t.
+    looked: function (dir, t) { return lastLook[dir] >= t; }
   };
 })();
