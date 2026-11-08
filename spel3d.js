@@ -16,12 +16,13 @@
   var rig, lookY = 0, lookP = 0, dragging = null, lookKey = 0, lookHeld = 0, NECK = 0.09, lastLook = { "-1": -99, "1": -99 };
   var mats = {}, geos = {};
 
+  function keep(x) { x.userData.keep = true; return x; }
   function mat(color, basic) {
     var key = color + (basic ? "b" : "");
-    if (!mats[key]) mats[key] = basic ? new T.MeshBasicMaterial({ color: color }) : new T.MeshLambertMaterial({ color: color, flatShading: true });
+    if (!mats[key]) mats[key] = keep(basic ? new T.MeshBasicMaterial({ color: color }) : new T.MeshLambertMaterial({ color: color, flatShading: true }));
     return mats[key];
   }
-  function box(w, h, d) { var k = "b" + w + "," + h + "," + d; return geos[k] || (geos[k] = new T.BoxGeometry(w, h, d)); }
+  function box(w, h, d) { var k = "b" + w + "," + h + "," + d; return geos[k] || (geos[k] = keep(new T.BoxGeometry(w, h, d))); }
   function mesh(g, m, x, y, z) { var o = new T.Mesh(g, m); o.position.set(x || 0, y || 0, z || 0); return o; }
 
   function init() {
@@ -343,11 +344,27 @@
     camera.updateProjectionMatrix();
   }
 
+  function drop(o) {
+    scene.remove(o);
+    o.traverse(function (m) {
+      if (m.geometry && !m.geometry.userData.keep) m.geometry.dispose();
+      (Array.isArray(m.material) ? m.material : m.material ? [m.material] : []).forEach(function (x) { if (!x.userData.keep) x.dispose(); });
+    });
+  }
+  // On a long drive, what lies far behind is dropped every couple of seconds.
+  var tidyT = 0;
+  function tidy(G) {
+    var p = G.p, far = function (o) { return Math.hypot(o.position.x - p.x, o.position.z - p.y) > 450; };
+    objs = objs.filter(function (o) { if (far(o)) { drop(o); return false; } return true; });
+    signMeshes = signMeshes.filter(function (m) { if (far(m.obj)) { drop(m.obj); return false; } return true; });
+    lightSets = lightSets.filter(function (l) { if (far(l.groups[0])) { l.groups.forEach(drop); return false; } return true; });
+    railSets = railSets.filter(function (r) { return r.f.s > p.s - 450; });
+  }
   function clearAll() {
-    objs.forEach(function (o) { scene.remove(o); });
-    Object.keys(npcMeshes).forEach(function (k) { scene.remove(npcMeshes[k]); });
-    signMeshes.forEach(function (o) { scene.remove(o.obj); });
-    lightSets.forEach(function (o) { o.groups.forEach(function (g) { scene.remove(g); }); });
+    objs.forEach(drop);
+    Object.keys(npcMeshes).forEach(function (k) { drop(npcMeshes[k]); });
+    signMeshes.forEach(function (o) { drop(o.obj); });
+    lightSets.forEach(function (o) { o.groups.forEach(drop); });
     objs = []; npcMeshes = {}; signMeshes = []; lightSets = []; railSets = []; groundAt = null; prevA = null;
   }
 
@@ -356,14 +373,14 @@
   function tree(x, y, r) {
     var g = new T.Group();
     g.add(mesh(new T.CylinderGeometry(0.15, 0.22, 1.6, 5), mat(0x6b4a2f), 0, 0.8, 0));
-    if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
+    if (!shadowMat) shadowMat = keep(new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false }));
     var sh = new T.Mesh(new T.CircleGeometry(r * 0.9, 8), shadowMat); sh.rotation.x = -Math.PI / 2; sh.position.set(0.4, 0.03, 0.4); g.add(sh);
     if (Math.random() < 0.4) {
       // A spruce: three stacked cones, white tips in winter.
       var dark = snowy ? 0x3d5a46 : 0x2f5a34;
       for (var k = 0; k < 3; k++) {
         var cr = r * (1.05 - k * 0.28), ch = r * 1.3;
-        g.add(mesh(cyl(0.01, cr, ch, 7), mat(k === 2 && snowy ? 0xf2f5f7 : dark), 0, 1.2 + k * r * 0.75 + ch / 2, 0));
+        g.add(mesh(new T.CylinderGeometry(0.01, cr, ch, 7), mat(k === 2 && snowy ? 0xf2f5f7 : dark), 0, 1.2 + k * r * 0.75 + ch / 2, 0));   // own shape: sizes vary
       }
       return place(g, x, y, Math.random() * 6);
     }
@@ -380,7 +397,8 @@
   function house(api, pc, d, rnd) {
     var c = api.toG(pc.P, d.u + d.dep / 2, d.w + d.len / 2);
     var hgt = 5 + rnd * 5, g = new T.Group();
-    g.add(mesh(box(d.dep, hgt, d.len), mat(d.c), 0, hgt / 2, 0));
+    // A unit box stretched to size: houses vary, and one shared shape keeps memory flat on a long drive.
+    var walls = mesh(box(1, 1, 1), mat(d.c), 0, hgt / 2, 0); walls.scale.set(d.dep, hgt, d.len); g.add(walls);
     var roof = mesh(new T.ConeGeometry(Math.SQRT1_2, 1, 4), mat(d.roof), 0, hgt + 1.1, 0);
     roof.rotation.y = Math.PI / 4; roof.scale.set(d.dep, 2.2, d.len); g.add(roof);
     // Windows with white frames on the road side; some are lit after dark.
@@ -398,7 +416,7 @@
       if (hgt > 6) addWin(hgt * 0.72, k);
     }
     // Plinth and a chimney.
-    g.add(mesh(box(d.dep + 0.1, 0.5, d.len + 0.1), mat(0x77736e), 0, 0.25, 0));
+    var plinth = mesh(box(1, 1, 1), mat(0x77736e), 0, 0.25, 0); plinth.scale.set(d.dep + 0.1, 0.5, d.len + 0.1); g.add(plinth);
     g.add(mesh(box(0.7, 2.2, 0.7), mat(0x8a4b3a), d.dep * 0.18, hgt + 1.6, d.len * 0.25));
     return place(g, c.x, c.y, pc.P.a);
   }
@@ -415,14 +433,14 @@
     if (pc.light) buildLights(api, pc);
   }
 
-  function cyl(r1, r2, h, n) { var k = "c" + r1 + "," + r2 + "," + h + "," + n; return geos[k] || (geos[k] = new T.CylinderGeometry(r1, r2, h, n)); }
+  function cyl(r1, r2, h, n) { var k = "c" + r1 + "," + r2 + "," + h + "," + n; return geos[k] || (geos[k] = keep(new T.CylinderGeometry(r1, r2, h, n))); }
   // Street furniture along a piece: lamps in town, white edge posts on country roads,
   // the guard rail between the motorway's carriageways, a shelter at a bus stop.
   function roadside(api, pc) {
     var L = pc.len, st = pc.st, at = function (u, w) { return api.toG(pc.P, u, w); };
     if (pc.kind === "mv") {
       var c = at(-8.4, L / 2), rail = new T.Group();
-      rail.add(mesh(box(0.1, 0.32, L), mat(0xc9c9c4), 0, 0.6, 0));
+      rail.add(mesh(new T.BoxGeometry(0.1, 0.32, L), mat(0xc9c9c4), 0, 0.6, 0));
       for (var k = -L / 2 + 2; k < L / 2; k += 4) rail.add(mesh(box(0.12, 0.6, 0.12), mat(0x8a8e94), 0, 0.3, k));
       place(rail, c.x, c.y, pc.P.a);
       return;
@@ -586,11 +604,11 @@
   // running, and a cyclist's legs follow the pedals. Every figure faces -z, like the cars.
   var UP = new T.Vector3(0, 1, 0), tubeGeos = {}, tv = new T.Vector3();
   function V(x, y, z) { return new T.Vector3(x, y, z); }
-  function capsule(r, len) { var k = "cap" + r + "," + len; return geos[k] || (geos[k] = new T.CapsuleGeometry(r, len, 4, 10)); }
-  function ball(r) { var k = "ball" + r; return geos[k] || (geos[k] = new T.SphereGeometry(r, 14, 10)); }
+  function capsule(r, len) { var k = "cap" + r + "," + len; return geos[k] || (geos[k] = keep(new T.CapsuleGeometry(r, len, 4, 10))); }
+  function ball(r) { var k = "ball" + r; return geos[k] || (geos[k] = keep(new T.SphereGeometry(r, 14, 10))); }
   // A round rod from a to b (a unit cylinder stretched and turned).
   function tube(a, b, r, m) {
-    var o = new T.Mesh(tubeGeos[r] || (tubeGeos[r] = new T.CylinderGeometry(r, r, 1, 8)), m);
+    var o = new T.Mesh(tubeGeos[r] || (tubeGeos[r] = keep(new T.CylinderGeometry(r, r, 1, 8))), m);
     setTube(o, a, b); return o;
   }
   function setTube(o, a, b) {
@@ -751,7 +769,7 @@
   }
   function makeNpc(n) {
     var g = new T.Group(), col = n.color || "#286ee0";
-    if (!shadowMat) shadowMat = new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
+    if (!shadowMat) shadowMat = keep(new T.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false }));
     if (n.mode !== "train") g.add(shadow(n.hw * 2 + 0.3, n.hl * 2 + 0.3));
     var fig = null;
     if (n.kind === "officer") {
@@ -849,7 +867,7 @@
   // A car body seen from the side, pushed out across the width with rounded edges: bonnet, glass
   // all round (windscreen, side and rear windows) under a roof in the body colour, and door mirrors.
   var paints = {}, carGeos = {};
-  function paint(c) { return paints[c] || (paints[c] = new T.MeshPhongMaterial({ color: c, specular: 0x666666, shininess: 70 })); }
+  function paint(c) { return paints[c] || (paints[c] = keep(new T.MeshPhongMaterial({ color: c, specular: 0x666666, shininess: 70 }))); }
   function carBody(g, n, col) {
     var hl = n.hl - 0.06, hw = n.hw - 0.06, k = hl + "," + hw;
     if (!carGeos[k]) {
@@ -857,7 +875,7 @@
         var sh = new T.Shape(); sh.moveTo(pts[0][0], pts[0][1]);
         for (var i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
         var geo = new T.ExtrudeGeometry(sh, { depth: depth, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 2 });
-        geo.translate(0, 0, -depth / 2); return geo;
+        geo.translate(0, 0, -depth / 2); return keep(geo);
       };
       // Shape x is -z (the car's front is at z = -hl): a quarter turn about y puts the push across the width.
       var lo = 0.3, belt = 0.98, roof = 1.42, f = hl, r = -hl;
@@ -914,7 +932,7 @@
         g.userData.siren[1].material.color.setHex(f ? 0x10224a : 0x4aa0ff);
       }
     });
-    Object.keys(npcMeshes).forEach(function (k) { if (!seen[k]) { scene.remove(npcMeshes[k]); delete npcMeshes[k]; } });
+    Object.keys(npcMeshes).forEach(function (k) { if (!seen[k]) { drop(npcMeshes[k]); delete npcMeshes[k]; } });
   }
 
   // Sky dome with a soft gradient, a few low-poly clouds and a dark line of forest on the horizon.
@@ -1033,6 +1051,7 @@
     G.course.feats.forEach(function (f) {
       if (f.kind === "rail" && !f.built3d && Math.abs(f.s - p.s) < 260) { f.built3d = true; railSets.push(buildRail(api, G, f)); }
     });
+    if (G.t - tidyT > 2 || G.t < tidyT) { tidyT = G.t; tidy(G); }
     updateRails(api, G);
     updateLights(api);
     updateNpcs(api, G, dt);
@@ -1083,6 +1102,8 @@
     render: render,
     hide: function () { if (canvas) canvas.style.display = "none"; },
     look: function (y, p) { lookY = y; lookP = p || 0; },   // for the scripted test bots
+    stats: function () { return renderer ? { objs: objs.length, signs: signMeshes.length, lights: lightSets.length, npcs: Object.keys(npcMeshes).length,
+      geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, sceneChildren: scene.children.length } : null; },
     // Whether the driver looked over that shoulder (-1 left, 1 right) since game time t.
     looked: function (dir, t) { return lastLook[dir] >= t; }
   };
