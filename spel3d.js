@@ -13,7 +13,7 @@
   var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
   var camA = 0, wheelA = 0, prevA = null, failed = false;
   // Looking around: the rig is the car's seat, the camera the driver's head turned by dragging the mouse.
-  var rig, lookY = 0, lookP = 0, dragging = null;
+  var rig, lookY = 0, lookP = 0, dragging = null, lookKey = 0, lookHeld = 0, NECK = 0.09;
   var mats = {}, geos = {};
 
   function mat(color, basic) {
@@ -71,146 +71,169 @@
     });
     canvas.addEventListener("pointermove", function (e) {
       if (!dragging) return;
-      lookY = Math.max(-1.35, Math.min(1.35, dragging.ly + (e.clientX - dragging.x) * 0.005));
-      lookP = Math.max(-0.45, Math.min(0.4, dragging.lp - (e.clientY - dragging.y) * 0.004));
+      lookY = Math.max(-2.4, Math.min(2.4, dragging.ly + (e.clientX - dragging.x) * 0.005));
+      lookP = Math.max(-0.5, Math.min(0.45, dragging.lp - (e.clientY - dragging.y) * 0.004));
     });
     function stop() { dragging = null; canvas.style.cursor = "grab"; }
     canvas.addEventListener("pointerup", stop); canvas.addEventListener("pointercancel", stop);
     canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    // Z and X held: a glance left or right, held longer a look over the shoulder (the blind spot).
+    function lookDir(e) { var k = e.key; return k === "z" || k === "Z" ? -1 : k === "x" || k === "X" ? 1 : 0; }
+    document.addEventListener("keydown", function (e) {
+      var d = lookDir(e); if (!d) return;
+      if (lookKey !== d) { lookKey = d; lookHeld = 0; }
+      e.preventDefault();
+    });
+    document.addEventListener("keyup", function (e) { if (lookDir(e) === lookKey) lookKey = 0; });
+    window.addEventListener("blur", function () { lookKey = 0; dragging = null; });
     if (!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches)) canvas.style.cursor = "grab";
   }
 
-  // The inside of the red car: dashboard, steering wheel, bonnet and pillars, fixed to the camera.
+  // The inside of the red car, built to a real car's proportions around the driver's eye at (0, 0, 0),
+  // forward is -z. The far edge of the bonnet sits about 11 degrees below eye level, and the top of the
+  // gauges and the dashboard stay below it, so nothing inside the car hides the road. The wheel sits in
+  // front of the dashboard, below the gauges, against the dashboard's lighter lower face.
+  var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk, ownCar;
+  function soft(c, e) { return new T.MeshLambertMaterial({ color: c, emissive: e || 0 }); }
   function buildCockpit() {
-    cockpit = new T.Group(); rig.add(cockpit); cockpit.rotation.x = -0.04;
-    var dash = mat(0x2a2e33), dashTop = mat(0x1d2024), trim = mat(0x3a3f45), liner = new T.MeshLambertMaterial({ color: 0xb9b3a7, emissive: 0x67635b }), door = mat(0x4a4f56), red = mat(0xe03832);
-    buildDash(trim);
-    // Bonnet in front.
-    cockpit.add(mesh(box(1.8, 0.12, 2.0), red, 0.35, -0.74, -2.25));
-    // Instrument cluster behind the wheel: speed, limit and blinker arrows, drawn into a canvas.
-    clusterCv = document.createElement("canvas"); clusterCv.width = 512; clusterCv.height = 176;
-    clusterTex = new T.CanvasTexture(clusterCv); if (T.SRGBColorSpace) clusterTex.colorSpace = T.SRGBColorSpace;
-    var cl = new T.Mesh(new T.PlaneGeometry(0.5, 0.172), new T.MeshBasicMaterial({ map: clusterTex }));
-    cl.position.set(0, -0.17, -0.735); cl.rotation.x = -0.12; cockpit.add(cl);
-    // Door on the left, with window sill and handle.
-    cockpit.add(mesh(box(0.08, 0.5, 1.3), door, -0.66, -0.55, -0.35));
-    cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, -0.63, -0.29, -0.35));
-    cockpit.add(mesh(box(0.03, 0.04, 0.16), mat(0x8c9198), -0.61, -0.4, -0.3));
-    buildCabin(dash, trim, door);
-    // Windscreen pillars, roof lining and sun visors.
-    [[-0.66, -0.95], [1.35, -1.0]].forEach(function (q) {
-      var pil = mesh(box(0.1, 1.4, 0.1), trim, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
-    });
-    cockpit.add(mesh(box(2.4, 0.1, 2.2), liner, 0.35, 0.62, 0.1));
-    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, -0.15, 0.55, -0.82));
-    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, 0.85, 0.55, -0.85));
-    // Mirrors: rear-view in the middle of the roof edge, one on each door. Their pictures come from cameras looking back.
+    cockpit = new T.Group(); rig.add(cockpit);
+    var trim = soft(0x33373c), door = soft(0x41454b), metal = soft(0xa7adb4, 0x2a2c2e);
+    cockpit.add(mesh(box(1.8, 0.12, 2.0), mat(0xe03832), 0.35, -0.68, -2.25));   // bonnet
+    buildDash(metal);
+    buildWheel(metal);
+    buildBody(trim, door, metal);
+    buildCabin();
+    // Mirrors: rear-view below the top of the windscreen, one on each door. Their pictures come from cameras looking back.
     mirrors = [
-      makeMirror(0.38, 0.17, -0.72, 0.4, 0.11, 34, 0x16191c, 0.6),
+      makeMirror(0.38, 0.15, -0.7, 0.4, 0.11, 34, 0x16191c, 0.6),
       makeMirror(-1.0, -0.06, -0.98, 0.22, 0.14, 40, 0x2a2e33, 0.5),
       makeMirror(1.0, -0.07, -1.12, 0.22, 0.14, 40, 0x2a2e33, -0.5)
     ];
-    cockpit.add(mesh(box(0.02, 0.4, 0.02), trim, 0.38, 0.4, -0.74));
-    // Steering wheel and the blinker stalk on its left.
-    var holder = new T.Group(); holder.position.set(0, -0.45, -0.56); holder.rotation.x = -0.42; cockpit.add(holder);
-    var column = mesh(new T.CylinderGeometry(0.035, 0.05, 0.25, 8), mat(0x1b1e22), 0, 0, -0.13); column.rotation.x = Math.PI / 2; holder.add(column);
-    stalk = new T.Group(); stalk.position.set(-0.05, 0, -0.07); holder.add(stalk);
-    stalk.add(mesh(box(0.15, 0.015, 0.015), mat(0x2c3136), -0.075, 0, 0));
-    wheel = new T.Group(); holder.add(wheel);
-    wheel.add(new T.Mesh(new T.TorusGeometry(0.19, 0.03, 12, 40), mat(0x202326)));
-    [0, 2.0, -2.0].forEach(function (a) {
-      var sp = mesh(box(0.05, 0.15, 0.02), mat(0x34393f), Math.sin(a) * 0.1, -Math.cos(a) * 0.1, 0);
-      sp.rotation.z = a; wheel.add(sp);
-    });
-    var hub = mesh(new T.CylinderGeometry(0.065, 0.07, 0.05, 10), mat(0x2c3136)); hub.rotation.x = Math.PI / 2; wheel.add(hub);
-    var logo = mesh(new T.CylinderGeometry(0.02, 0.02, 0.012, 10), mat(0x9aa0a6), 0, 0, 0.03); logo.rotation.x = Math.PI / 2; wheel.add(logo);
-    wheel.add(mesh(box(0.05, 0.03, 0.035), mat(0xb8b2a6), 0, 0.19, 0.0));   // stitching mark at the top
+    cockpit.add(mesh(box(0.02, 0.08, 0.02), trim, 0.38, 0.24, -0.68));
   }
-  var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk, ownCar;
-  // The dashboard, laid out like a real car's: one rounded panel across the whole width (dark top against
-  // windscreen glare, a softer lower face), the gauges in a framed housing behind the wheel, a centre stack
-  // with the screen on top, two vents and the hazard button below it and the climate knobs under them,
-  // round vents at both ends and a glovebox on the passenger side.
-  function buildDash(trim) {
-    var soft = function (c, e) { return new T.MeshLambertMaterial({ color: c, emissive: e || 0x000000 }); };
-    var top = soft(0x24272b, 0x0c0d0e), face = soft(0x3a3e44, 0x111214), dark = soft(0x15171a), metal = soft(0xa7adb4, 0x2a2c2e);
-    var L = -0.64, R = 1.34, W = R - L;
+  // The dashboard: a rounded panel across the whole width (dark padded top against windscreen glare,
+  // a lighter lower face), the gauges in a framed housing in front of the driver, a centre stack with the
+  // screen, two vents, the hazard button and the climate knobs, round vents at both ends and a glovebox.
+  function buildDash(metal) {
+    var top = soft(0x24272b, 0x0c0d0e), face = soft(0x7a756d, 0x1c1b19), dark = soft(0x15171a);
+    var L = -0.64, R = 1.34, W = R - L, cx = 0.36;
     // Side profile drawn as (-z, y), pushed out across the width: turned a quarter about y, the shape's x
     // becomes -z and the push runs along +x.
     var pr = new T.Shape();
-    pr.moveTo(1.25, -0.42); pr.lineTo(1.05, -0.37);
-    pr.quadraticCurveTo(0.78, -0.34, 0.6, -0.37);
-    pr.quadraticCurveTo(0.5, -0.39, 0.51, -0.47);
-    pr.lineTo(0.56, -0.62); pr.lineTo(0.66, -0.66); pr.lineTo(1.25, -0.66); pr.closePath();
-    var body = new T.Mesh(new T.ExtrudeGeometry(pr, { depth: W, bevelEnabled: false, curveSegments: 14 }), [top, face]);
-    body.rotation.y = Math.PI / 2; body.position.x = L;
-    cockpit.add(body);
-    // Lower face panel and a metal strip across the passenger side.
-    cockpit.add(mesh(box(W - 0.04, 0.14, 0.02), face, (L + R) / 2, -0.56, -0.565));
-    cockpit.add(mesh(box(0.72, 0.014, 0.012), metal, 0.95, -0.465, -0.514));
-    // Glovebox: a slightly raised panel with a handle.
-    cockpit.add(mesh(box(0.46, 0.13, 0.015), face, 0.95, -0.57, -0.552));
-    cockpit.add(mesh(box(0.1, 0.018, 0.02), metal, 0.95, -0.52, -0.545));
-    // Gauge housing: a rounded frame around the cluster, with a brow on top.
-    var fr = new T.Shape(), hw = 0.3, hh = 0.13, r = 0.05;
+    pr.moveTo(1.25, -0.3); pr.lineTo(1.15, -0.27);
+    pr.quadraticCurveTo(0.95, -0.235, 0.8, -0.24);
+    pr.quadraticCurveTo(0.72, -0.245, 0.72, -0.3);
+    pr.lineTo(0.74, -0.52); pr.lineTo(0.82, -0.72); pr.lineTo(1.25, -0.72); pr.closePath();
+    var body = new T.Mesh(new T.ExtrudeGeometry(pr, { depth: W, bevelEnabled: false, curveSegments: 14 }), top);
+    body.rotation.y = Math.PI / 2; body.position.x = L; cockpit.add(body);
+    cockpit.add(mesh(box(W - 0.02, 0.2, 0.02), face, (L + R) / 2, -0.42, -0.722));     // lighter lower face
+    cockpit.add(mesh(box(0.72, 0.014, 0.012), metal, 0.95, -0.335, -0.711));            // trim strip
+    cockpit.add(mesh(box(0.46, 0.12, 0.012), soft(0x6c675f, 0x181715), 0.95, -0.44, -0.708));   // glovebox
+    cockpit.add(mesh(box(0.1, 0.018, 0.02), metal, 0.95, -0.395, -0.7));
+    // Gauges: a rounded, bevelled frame on a housing that rises a little above the dashboard.
+    cockpit.add(mesh(box(0.44, 0.15, 0.14), top, 0, -0.255, -0.79));
+    var fr = new T.Shape(), hw = 0.205, hh = 0.074, r = 0.03;
     fr.moveTo(-hw + r, -hh); fr.lineTo(hw - r, -hh); fr.quadraticCurveTo(hw, -hh, hw, -hh + r); fr.lineTo(hw, hh - r);
     fr.quadraticCurveTo(hw, hh, hw - r, hh); fr.lineTo(-hw + r, hh); fr.quadraticCurveTo(-hw, hh, -hw, hh - r);
     fr.lineTo(-hw, -hh + r); fr.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
-    var hole = new T.Path(); hole.moveTo(-0.255, -0.09); hole.lineTo(0.255, -0.09); hole.lineTo(0.255, 0.09); hole.lineTo(-0.255, 0.09); hole.closePath();
+    var hole = new T.Path(); hole.moveTo(-0.182, -0.064); hole.lineTo(0.182, -0.064); hole.lineTo(0.182, 0.064); hole.lineTo(-0.182, 0.064); hole.closePath();
     fr.holes.push(hole);
-    var frame = new T.Mesh(new T.ExtrudeGeometry(fr, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 3, curveSegments: 8 }), top);
-    frame.position.set(0, -0.17, -0.74); frame.rotation.x = -0.12; cockpit.add(frame);
-    cockpit.add(mesh(box(0.6, 0.36, 0.26), top, 0, -0.23, -0.88));                     // housing behind it
-    // Centre stack: screen on top, then vents, hazard button and climate knobs.
-    var cx = 0.36;
-    cockpit.add(mesh(box(0.36, 0.3, 0.06), face, cx, -0.55, -0.53));
-    var bez = mesh(box(0.32, 0.19, 0.03), dark, cx, -0.29, -0.735); bez.rotation.x = -0.15; cockpit.add(bez);
-    var scr = new T.Mesh(new T.PlaneGeometry(0.29, 0.16), new T.MeshBasicMaterial({ color: 0x1b3a4f }));
-    scr.position.set(cx, -0.288, -0.718); scr.rotation.x = -0.15; cockpit.add(scr);
-    // A map on the screen: a few roads and a position arrow.
-    [[0, 0, 0.26, 0.012, 0x6b8797], [0.05, 0.04, 0.012, 0.13, 0x6b8797], [-0.08, -0.04, 0.012, 0.09, 0x4f6878]].forEach(function (q) {
+    var frame = new T.Mesh(new T.ExtrudeGeometry(fr, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 3, curveSegments: 8 }), top);
+    frame.position.set(0, -0.227, -0.715); frame.rotation.x = -0.25; cockpit.add(frame);
+    // The cluster itself: speed, limit and blinker arrows, drawn into a canvas.
+    clusterCv = document.createElement("canvas"); clusterCv.width = 512; clusterCv.height = 176;
+    clusterTex = new T.CanvasTexture(clusterCv); if (T.SRGBColorSpace) clusterTex.colorSpace = T.SRGBColorSpace;
+    var cl = new T.Mesh(new T.PlaneGeometry(0.36, 0.124), new T.MeshBasicMaterial({ map: clusterTex }));
+    cl.position.set(0, -0.227, -0.7); cl.rotation.x = -0.25; cockpit.add(cl);
+    // Centre stack: screen with a map, then two vents with the hazard button between, then the knobs.
+    cockpit.add(mesh(box(0.36, 0.5, 0.1), top, cx, -0.48, -0.69));
+    var sy = -0.33, sz = -0.627;
+    var bez = mesh(box(0.29, 0.17, 0.02), dark, cx, sy, sz - 0.005); bez.rotation.x = -0.12; cockpit.add(bez);
+    var scr = new T.Mesh(new T.PlaneGeometry(0.27, 0.15), new T.MeshBasicMaterial({ color: 0x1b3a4f }));
+    scr.position.set(cx, sy, sz + 0.006); scr.rotation.x = -0.12; cockpit.add(scr);
+    [[0, 0, 0.24, 0.011, 0x6b8797], [0.05, 0.035, 0.011, 0.12, 0x6b8797], [-0.08, -0.035, 0.011, 0.08, 0x4f6878]].forEach(function (q) {
       var m = new T.Mesh(new T.PlaneGeometry(q[2], q[3]), new T.MeshBasicMaterial({ color: q[4] }));
-      m.position.set(cx + q[0], -0.288 + q[1] * 0.99, -0.716 + q[1] * 0.15); m.rotation.x = -0.15; cockpit.add(m);
+      m.position.set(cx + q[0], sy + q[1], sz + 0.008 + q[1] * 0.12); m.rotation.x = -0.12; cockpit.add(m);
     });
-    var arrow = new T.Mesh(new T.CircleGeometry(0.014, 3), new T.MeshBasicMaterial({ color: 0x0cd29d }));
-    arrow.position.set(cx + 0.05, -0.288, -0.715); arrow.rotation.set(-0.15, 0, Math.PI / 2); cockpit.add(arrow);
+    var arrow = new T.Mesh(new T.CircleGeometry(0.013, 3), new T.MeshBasicMaterial({ color: 0x0cd29d }));
+    arrow.position.set(cx + 0.05, sy, sz + 0.01); arrow.rotation.set(-0.12, 0, Math.PI / 2); cockpit.add(arrow);
     function vent(x, y, z, w, h) {
       cockpit.add(mesh(box(w + 0.02, h + 0.02, 0.02), metal, x, y, z));
       cockpit.add(mesh(box(w, h, 0.022), dark, x, y, z + 0.002));
-      for (var k = 1; k < 4; k++) cockpit.add(mesh(box(w - 0.01, 0.006, 0.026), face, x, y - h / 2 + k * h / 4, z + 0.003));
+      for (var k = 1; k < 4; k++) cockpit.add(mesh(box(w - 0.01, 0.006, 0.026), top, x, y - h / 2 + k * h / 4, z + 0.003));
     }
-    vent(cx - 0.09, -0.45, -0.498, 0.13, 0.06); vent(cx + 0.09, -0.45, -0.498, 0.13, 0.06);
-    var haz = mesh(new T.CylinderGeometry(0.018, 0.018, 0.01, 3), soft(0xd23a30, 0x401010), cx, -0.45, -0.49);
+    vent(cx - 0.09, -0.46, -0.632, 0.13, 0.06); vent(cx + 0.09, -0.46, -0.632, 0.13, 0.06);
+    var haz = mesh(new T.CylinderGeometry(0.018, 0.018, 0.01, 3), soft(0xd23a30, 0x401010), cx, -0.46, -0.625);
     haz.rotation.x = Math.PI / 2; cockpit.add(haz);
     [-0.1, 0, 0.1].forEach(function (dx, i) {
-      var k = mesh(new T.CylinderGeometry(0.026, 0.028, 0.03, 16), i === 1 ? dark : metal, cx + dx, -0.58, -0.49);
+      var k = mesh(new T.CylinderGeometry(0.026, 0.028, 0.03, 16), i === 1 ? dark : metal, cx + dx, -0.57, -0.625);
       k.rotation.x = Math.PI / 2; cockpit.add(k);
     });
     // Round vents at both ends of the dashboard.
     [L + 0.13, R - 0.13].forEach(function (x) {
-      var ring = mesh(new T.TorusGeometry(0.045, 0.01, 8, 20), metal, x, -0.44, -0.505); cockpit.add(ring);
-      var inner = mesh(new T.CircleGeometry(0.045, 20), dark, x, -0.44, -0.508); cockpit.add(inner);
-      cockpit.add(mesh(box(0.08, 0.006, 0.01), face, x, -0.44, -0.503));
+      cockpit.add(mesh(new T.TorusGeometry(0.045, 0.01, 8, 20), metal, x, -0.36, -0.708));
+      cockpit.add(mesh(new T.CircleGeometry(0.045, 20), dark, x, -0.36, -0.711));
+      cockpit.add(mesh(box(0.08, 0.006, 0.01), soft(0x2c2f33), x, -0.36, -0.706));
     });
   }
-  // What shows when looking around: console, gear lever, the passenger side, seats and the instructor.
-  function buildCabin(dash, trim, door) {
-    var seat = mat(0x2b2f36), seatSide = mat(0x3a3f47);
-    cockpit.add(mesh(box(0.3, 0.3, 0.8), dash, 0.36, -0.78, -0.3));                  // centre console
-    cockpit.add(mesh(box(0.22, 0.02, 0.5), mat(0x15181b), 0.36, -0.625, -0.25));
-    var lever = mesh(cyl(0.012, 0.015, 0.18, 6), mat(0x8c9198), 0.36, -0.53, -0.32); lever.rotation.x = 0.2; cockpit.add(lever);
-    cockpit.add(mesh(new T.SphereGeometry(0.04, 10, 8), mat(0x1b1e22), 0.36, -0.44, -0.34));
-    // Passenger door and B-pillars.
-    cockpit.add(mesh(box(0.08, 0.5, 1.3), door, 1.36, -0.55, -0.35));
-    cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, 1.33, -0.29, -0.35));
-    [-0.66, 1.36].forEach(function (x) {
-      cockpit.add(mesh(box(0.1, 1.0, 0.14), trim, x, 0.1, 0.42));
-      var spk = mesh(new T.CircleGeometry(0.07, 12), mat(0x1a1d21), x + (x < 0 ? 0.045 : -0.045), -0.62, -0.55);   // speaker
-      spk.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; cockpit.add(spk);
+  // Steering wheel in black leather with silver spokes, its top just below the gauges; the blinker stalk on its left.
+  function buildWheel(metal) {
+    var holder = new T.Group(); holder.position.set(0, -0.45, -0.48); holder.rotation.x = -0.45; cockpit.add(holder);
+    var leather = new T.MeshPhongMaterial({ color: 0x1a1c1f, specular: 0x4a4e55, shininess: 30 });
+    var column = mesh(new T.CylinderGeometry(0.045, 0.06, 0.3, 14), soft(0x1b1e22), 0, 0, -0.17); column.rotation.x = Math.PI / 2; holder.add(column);
+    stalk = new T.Group(); stalk.position.set(-0.06, 0, -0.09); holder.add(stalk);
+    stalk.add(mesh(box(0.17, 0.016, 0.016), soft(0x2c3136), -0.085, 0, 0));
+    wheel = new T.Group(); holder.add(wheel);
+    wheel.add(new T.Mesh(new T.TorusGeometry(0.185, 0.028, 14, 48), leather));
+    [0, Math.PI / 2, -Math.PI / 2].forEach(function (a) {
+      var sp = mesh(box(0.05, 0.15, 0.022), leather, Math.sin(a) * 0.1, -Math.cos(a) * 0.1, 0); sp.rotation.z = a; wheel.add(sp);
+      var inl = mesh(box(0.012, 0.13, 0.024), metal, Math.sin(a) * 0.1, -Math.cos(a) * 0.1, 0.002); inl.rotation.z = a; wheel.add(inl);
     });
-    // Roof side rails, so the side windows have a frame, and a floor.
-    [-0.62, 1.32].forEach(function (x) { cockpit.add(mesh(box(0.08, 0.08, 1.7), trim, x, 0.56, -0.15)); });
-    cockpit.add(mesh(box(2.0, 0.04, 1.6), mat(0x16181b), 0.35, -1.02, -0.35));
+    var hub = mesh(new T.CylinderGeometry(0.075, 0.08, 0.06, 20), leather); hub.rotation.x = Math.PI / 2; wheel.add(hub);
+    var logo = mesh(new T.CylinderGeometry(0.02, 0.02, 0.012, 14), metal, 0, 0, 0.035); logo.rotation.x = Math.PI / 2; wheel.add(logo);
+    wheel.add(mesh(box(0.05, 0.03, 0.06), soft(0xd8b27a, 0x2a2010), 0, 0.185, 0));   // stitching mark at the top
+  }
+  // The car's body around the cabin: front and rear doors on both sides, the pillars (the rear ones wide,
+  // like a real car's blind spot), roof lining, rear window and floor, so turning the head shows a whole car.
+  function buildBody(trim, door, metal) {
+    var liner = soft(0xb9b3a7, 0x67635b);
+    [-0.66, 1.36].forEach(function (x) {
+      var s = x < 0 ? 1 : -1;   // towards the inside
+      cockpit.add(mesh(box(0.08, 0.5, 1.3), door, x, -0.55, -0.35));
+      cockpit.add(mesh(box(0.08, 0.5, 0.85), door, x, -0.55, 0.78));
+      cockpit.add(mesh(box(0.12, 0.05, 2.25), trim, x + s * 0.03, -0.29, 0.1));          // window sill
+      cockpit.add(mesh(box(0.08, 0.04, 0.5), trim, x + s * 0.07, -0.47, -0.2));          // armrest
+      cockpit.add(mesh(box(0.03, 0.04, 0.16), metal, x + s * 0.05, -0.4, -0.45));       // handles
+      cockpit.add(mesh(box(0.03, 0.04, 0.14), metal, x + s * 0.05, -0.4, 0.62));
+      var spk = mesh(new T.CircleGeometry(0.07, 14), soft(0x1a1d21), x + s * 0.045, -0.66, -0.75);
+      spk.rotation.y = s * Math.PI / 2; cockpit.add(spk);
+      var a = mesh(box(0.08, 0.79, 0.1), trim, x + s * 0.04, 0.02, -0.885); a.rotation.x = 0.74; cockpit.add(a);   // windscreen pillar
+      cockpit.add(mesh(box(0.1, 1.11, 0.14), trim, x + s * 0.03, -0.245, 0.42));                                  // middle pillar
+      var c = mesh(box(0.1, 0.67, 0.25), trim, x + s * 0.03, 0.01, 1.1); c.rotation.x = -0.464; cockpit.add(c);   // rear pillar
+      cockpit.add(mesh(box(0.08, 0.07, 1.62), trim, x + s * 0.04, 0.31, 0.19));                                   // roof rail
+    });
+    cockpit.add(mesh(box(2.0, 0.06, 0.08), trim, 0.35, 0.31, -0.62));      // top of the windscreen
+    cockpit.add(mesh(box(2.0, 0.06, 0.08), trim, 0.35, 0.31, 0.98));       // top of the rear window
+    cockpit.add(mesh(box(2.0, 0.04, 1.62), liner, 0.35, 0.35, 0.19));      // roof lining
+    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, -0.15, 0.3, -0.5));      // sun visors
+    cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, 0.85, 0.3, -0.5));
+    cockpit.add(mesh(box(1.9, 0.03, 0.45), soft(0x1d2023), 0.35, -0.21, 1.42));   // shelf under the rear window
+    cockpit.add(mesh(box(2.0, 0.04, 2.6), soft(0x16181b), 0.35, -1.02, 0.25));    // floor
+  }
+  // Console, gear lever, armrest, front and rear seats and the instructor.
+  function buildCabin() {
+    var seat = mat(0x2b2f36), seatSide = mat(0x3a3f47), con = soft(0x24272b);
+    cockpit.add(mesh(box(0.3, 0.3, 0.8), con, 0.36, -0.78, -0.3));                    // centre console
+    cockpit.add(mesh(box(0.22, 0.02, 0.5), soft(0x15181b), 0.36, -0.625, -0.25));
+    var lever = mesh(cyl(0.012, 0.015, 0.18, 6), soft(0x8c9198), 0.36, -0.53, -0.32); lever.rotation.x = 0.2; cockpit.add(lever);
+    cockpit.add(mesh(new T.SphereGeometry(0.04, 12, 10), soft(0x1b1e22), 0.36, -0.44, -0.34));
+    cockpit.add(mesh(box(0.28, 0.1, 0.4), soft(0x2b2f36), 0.36, -0.58, 0.2));           // armrest
+    // Rear bench: cushion, back and three head rests.
+    var rc = mesh(new T.CapsuleGeometry(0.1, 1.05, 4, 10), seat, 0.35, -0.84, 0.92); rc.rotation.z = Math.PI / 2; rc.scale.set(1.3, 1, 2.6); cockpit.add(rc);
+    var rb = mesh(box(1.25, 0.62, 0.14), seat, 0.35, -0.47, 1.22); rb.rotation.x = 0.18; cockpit.add(rb);
+    [-0.12, 0.35, 0.82].forEach(function (x) {
+      var hr = mesh(new T.CapsuleGeometry(0.06, 0.12, 4, 10), seatSide, x, -0.07, 1.29); hr.rotation.z = Math.PI / 2; hr.scale.z = 0.7; cockpit.add(hr);
+    });
     // Seats: the driver's back behind the camera, the passenger's with the instructor in it.
     [0, 0.72].forEach(function (x) {
       var cush = mesh(new T.CapsuleGeometry(0.1, 0.32, 4, 10), seat, x, -0.86, 0.05); cockpit.add(cush); cush.rotation.z = Math.PI / 2; cush.scale.set(1.3, 1, 2.5);
@@ -218,7 +241,6 @@
       var rest = mesh(new T.CapsuleGeometry(0.07, 0.12, 4, 10), seatSide, x, 0.02, 0.45); rest.rotation.z = Math.PI / 2; rest.scale.z = 0.7; cockpit.add(rest);
     });
     // The instructor: rounded shapes, leaning into the seat, head turned a little towards the driver.
-    var soft = function (c) { return new T.MeshLambertMaterial({ color: c }); };
     var shirt = soft(0x2d5d8a), skin = soft(0xe0b08a), trousers = soft(0x30343c);
     var t = new T.Group(); t.position.set(0.72, 0, 0.12); cockpit.add(t);
     var body = mesh(new T.CapsuleGeometry(0.16, 0.3, 6, 14), shirt, 0, -0.5, 0.14); body.rotation.x = 0.12; body.scale.z = 0.7; t.add(body);
@@ -832,8 +854,13 @@
     var foggy = G.course.pieceAt(p.s).st.fog, fn = foggy ? 6 : baseFog[0], ff = foggy ? 38 : baseFog[1];
     scene.fog.near += (fn - scene.fog.near) * Math.min(1, dt * 0.8); scene.fog.far += (ff - scene.fog.far) * Math.min(1, dt * 0.8);
     rig.rotation.set(0, -camA, 0);
-    if (!dragging) { var back = Math.min(1, dt * 3); lookY -= lookY * back; lookP -= lookP * back; }
-    camera.rotation.set(-0.04 + lookP, -lookY, 0);
+    if (lookKey) {
+      lookHeld += dt;
+      lookY += (lookKey * (lookHeld < 0.45 ? 1.45 : 2.35) - lookY) * Math.min(1, dt * 7);
+    } else if (!dragging) { var back = Math.min(1, dt * 4); lookY -= lookY * back; lookP -= lookP * back; }
+    // The head turns about the neck, a little behind the eyes, and looks slightly down at the road.
+    camera.rotation.set(-0.1 + lookP, -lookY, 0);
+    camera.position.set(Math.sin(lookY) * NECK, 0, NECK - Math.cos(lookY) * NECK);
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
     var rate = dt > 0 ? api.angDiff(p.a, prevA) / dt : 0; prevA = p.a;
@@ -853,6 +880,7 @@
   window.SPEL3D = {
     ready: function () { if (!renderer && !failed) init(); return !failed; },
     render: render,
-    hide: function () { if (canvas) canvas.style.display = "none"; }
+    hide: function () { if (canvas) canvas.style.display = "none"; },
+    look: function (y, p) { lookY = y; lookP = p || 0; }   // for the scripted test bots
   };
 })();
