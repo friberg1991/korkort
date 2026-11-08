@@ -12,6 +12,8 @@
   var renderer = null, scene, camera, cockpit, wheel, grass, ground, groundCv, groundTex, gctx, canvas;
   var groundAt = null, lastG = null, lastPieces = 0, objs = [], npcMeshes = {}, signMeshes = [], lightSets = [];
   var camA = 0, wheelA = 0, prevA = null, failed = false;
+  // Looking around: the rig is the car's seat, the camera the driver's head turned by dragging the mouse.
+  var rig, lookY = 0, lookP = 0, dragging = null;
   var mats = {}, geos = {};
 
   function mat(color, basic) {
@@ -36,12 +38,12 @@
     scene.fog = new T.Fog(sky, 55, 135);
     camera = new T.PerspectiveCamera(70, 1, 0.05, 500);
     camera.rotation.order = "YXZ";
-    scene.add(camera);
+    rig = new T.Group(); scene.add(rig); rig.add(camera);
     hemi = new T.HemisphereLight(0xeaf3ff, 0x6a8a50, 1.0); scene.add(hemi);
     sun = new T.DirectionalLight(0xfff4e0, 0.85); sun.position.set(40, 80, 25); scene.add(sun);
     // Headlights: a spot from the front of the car, longer with full beam.
     beam = new T.SpotLight(0xfff2d6, 0, 70, 0.5, 0.55, 1.1); beam.position.set(0.36, -0.8, -3.5);
-    beam.target.position.set(0.36, -1.2, -25); camera.add(beam); camera.add(beam.target);
+    beam.target.position.set(0.36, -1.2, -25); rig.add(beam); rig.add(beam.target);
     buildSkyline();
     grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
     grass.rotation.x = -Math.PI / 2; scene.add(grass);
@@ -56,16 +58,37 @@
     buildOwnCar();
     window.addEventListener("resize", resize);
     resize();
+    mouseLook();
+  }
+  // Hold a mouse button on the 3D view and drag to look around; the view turns back ahead on release.
+  // Mouse only: on a phone the screen is the pedals and blinkers.
+  function mouseLook() {
+    canvas.addEventListener("pointerdown", function (e) {
+      if (e.pointerType !== "mouse") return;
+      dragging = { x: e.clientX, y: e.clientY, ly: lookY, lp: lookP };
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not needed */ }
+      canvas.style.cursor = "grabbing"; e.preventDefault();
+    });
+    canvas.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      lookY = Math.max(-1.75, Math.min(1.75, dragging.ly + (e.clientX - dragging.x) * 0.005));
+      lookP = Math.max(-0.6, Math.min(0.45, dragging.lp - (e.clientY - dragging.y) * 0.004));
+    });
+    function stop() { dragging = null; canvas.style.cursor = "grab"; }
+    canvas.addEventListener("pointerup", stop); canvas.addEventListener("pointercancel", stop);
+    canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    if (!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches)) canvas.style.cursor = "grab";
   }
 
   // The inside of the red car: dashboard, steering wheel, bonnet and pillars, fixed to the camera.
   function buildCockpit() {
-    cockpit = new T.Group(); camera.add(cockpit);
+    cockpit = new T.Group(); rig.add(cockpit); cockpit.rotation.x = -0.04;
     var dash = mat(0x2a2e33), dashTop = mat(0x1d2024), trim = mat(0x3a3f45), liner = mat(0xb9b3a7), door = mat(0x4a4f56), red = mat(0xe03832);
     // Dashboard: a long body, a darker top under the windscreen and a hump over the gauges.
     cockpit.add(mesh(box(2.6, 0.34, 0.75), dash, 0.35, -0.54, -0.88));
     cockpit.add(mesh(box(2.6, 0.05, 0.5), dashTop, 0.35, -0.38, -1.05));
-    cockpit.add(mesh(box(0.6, 0.2, 0.28), dashTop, 0, -0.31, -0.88));
+    cockpit.add(mesh(box(0.6, 0.3, 0.28), dashTop, 0, -0.21, -0.9));
+    cockpit.add(mesh(box(0.58, 0.025, 0.12), dashTop, 0, -0.05, -0.84));   // hood over the gauges
     // A brushed-metal strip and a soft lighter panel across the dashboard.
     cockpit.add(mesh(box(2.4, 0.012, 0.01), mat(0x9aa3ad), 0.35, -0.45, -0.505));
     cockpit.add(mesh(box(2.4, 0.07, 0.01), mat(0x3b4148), 0.35, -0.5, -0.504));
@@ -75,7 +98,7 @@
     clusterCv = document.createElement("canvas"); clusterCv.width = 512; clusterCv.height = 176;
     clusterTex = new T.CanvasTexture(clusterCv); if (T.SRGBColorSpace) clusterTex.colorSpace = T.SRGBColorSpace;
     var cl = new T.Mesh(new T.PlaneGeometry(0.5, 0.172), new T.MeshBasicMaterial({ map: clusterTex }));
-    cl.position.set(0, -0.2, -0.74); cl.rotation.x = -0.12; cockpit.add(cl);
+    cl.position.set(0, -0.17, -0.735); cl.rotation.x = -0.12; cockpit.add(cl);
     // Centre screen and air vents.
     cockpit.add(mesh(box(0.3, 0.19, 0.03), mat(0x111417), 0.5, -0.33, -0.7));
     var scr = mesh(new T.PlaneGeometry(0.27, 0.16), new T.MeshBasicMaterial({ color: 0x1f4257 }), 0.5, -0.33, -0.684); cockpit.add(scr);
@@ -86,11 +109,12 @@
     cockpit.add(mesh(box(0.08, 0.5, 1.3), door, -0.66, -0.55, -0.35));
     cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, -0.63, -0.29, -0.35));
     cockpit.add(mesh(box(0.03, 0.04, 0.16), mat(0x8c9198), -0.61, -0.4, -0.3));
+    buildCabin(dash, trim, door);
     // Windscreen pillars, roof lining and sun visors.
     [[-0.66, -0.95], [1.35, -1.0]].forEach(function (q) {
       var pil = mesh(box(0.1, 1.4, 0.1), trim, q[0], 0.2, q[1]); pil.rotation.x = -0.45; cockpit.add(pil);
     });
-    cockpit.add(mesh(box(2.4, 0.1, 0.9), liner, 0.35, 0.62, -0.5));
+    cockpit.add(mesh(box(2.4, 0.1, 2.2), liner, 0.35, 0.62, 0.1));
     cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, -0.15, 0.55, -0.82));
     cockpit.add(mesh(box(0.42, 0.03, 0.2), liner, 0.85, 0.55, -0.85));
     // Mirrors: rear-view in the middle of the roof edge, one on each door. Their pictures come from cameras looking back.
@@ -101,7 +125,7 @@
     ];
     cockpit.add(mesh(box(0.02, 0.4, 0.02), trim, 0.38, 0.4, -0.74));
     // Steering wheel and the blinker stalk on its left.
-    var holder = new T.Group(); holder.position.set(0, -0.38, -0.56); holder.rotation.x = -0.42; cockpit.add(holder);
+    var holder = new T.Group(); holder.position.set(0, -0.45, -0.56); holder.rotation.x = -0.42; cockpit.add(holder);
     var column = mesh(new T.CylinderGeometry(0.035, 0.05, 0.25, 8), mat(0x1b1e22), 0, 0, -0.13); column.rotation.x = Math.PI / 2; holder.add(column);
     stalk = new T.Group(); stalk.position.set(-0.05, 0, -0.07); holder.add(stalk);
     stalk.add(mesh(box(0.15, 0.015, 0.015), mat(0x2c3136), -0.075, 0, 0));
@@ -116,6 +140,39 @@
     wheel.add(mesh(box(0.05, 0.03, 0.035), mat(0xb8b2a6), 0, 0.19, 0.0));   // stitching mark at the top
   }
   var clusterCv, clusterTex, clusterKey = "", mirrors = [], stalk, ownCar;
+  // What shows when looking around: console, gear lever, the passenger side, seats and the instructor.
+  function buildCabin(dash, trim, door) {
+    var seat = mat(0x2b2f36), seatSide = mat(0x3a3f47);
+    cockpit.add(mesh(box(0.3, 0.3, 0.8), dash, 0.36, -0.78, -0.3));                  // centre console
+    cockpit.add(mesh(box(0.22, 0.02, 0.5), mat(0x15181b), 0.36, -0.625, -0.25));
+    var lever = mesh(cyl(0.012, 0.015, 0.18, 6), mat(0x8c9198), 0.36, -0.53, -0.32); lever.rotation.x = 0.2; cockpit.add(lever);
+    cockpit.add(mesh(new T.SphereGeometry(0.04, 10, 8), mat(0x1b1e22), 0.36, -0.44, -0.34));
+    cockpit.add(mesh(box(0.5, 0.004, 0.01), mat(0x15181b), 0.85, -0.5, -0.504));     // glovebox line
+    // Passenger door and B-pillars.
+    cockpit.add(mesh(box(0.08, 0.5, 1.3), door, 1.36, -0.55, -0.35));
+    cockpit.add(mesh(box(0.12, 0.05, 1.3), trim, 1.33, -0.29, -0.35));
+    [-0.66, 1.36].forEach(function (x) {
+      cockpit.add(mesh(box(0.1, 1.0, 0.14), trim, x, 0.1, 0.42));
+      var spk = mesh(new T.CircleGeometry(0.07, 12), mat(0x1a1d21), x + (x < 0 ? 0.045 : -0.045), -0.62, -0.55);   // speaker
+      spk.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; cockpit.add(spk);
+    });
+    // Seats: the driver's back behind the camera, the passenger's with the instructor in it.
+    [0, 0.72].forEach(function (x) {
+      cockpit.add(mesh(box(0.5, 0.14, 0.52), seat, x, -0.86, 0.05));
+      var back = mesh(box(0.5, 0.75, 0.13), seat, x, -0.42, 0.38); back.rotation.x = 0.18; cockpit.add(back);
+      cockpit.add(mesh(box(0.3, 0.2, 0.1), seatSide, x, 0.08, 0.46));                  // head rest
+    });
+    var t = new T.Group(); t.position.set(0.72, 0, 0.12); cockpit.add(t);
+    var shirt = mat(0x2d5d8a), skin = mat(0xe0b08a);
+    var body = mesh(box(0.4, 0.55, 0.22), shirt, 0, -0.5, 0.08); body.rotation.x = 0.15; t.add(body);
+    t.add(mesh(cyl(0.05, 0.05, 0.08, 8), skin, 0, -0.18, 0.05));
+    t.add(mesh(new T.SphereGeometry(0.11, 12, 10), skin, 0, -0.06, 0.04));
+    var hair = mesh(new T.SphereGeometry(0.115, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x5a3d26), 0, -0.04, 0.05); t.add(hair);
+    [-0.045, 0.045].forEach(function (x) { t.add(mesh(new T.SphereGeometry(0.014, 6, 6), mat(0x222222), x, -0.05, -0.065)); });   // eyes
+    [-0.24, 0.24].forEach(function (x) { var arm = mesh(box(0.09, 0.42, 0.1), shirt, x, -0.55, -0.05); arm.rotation.x = 0.6; t.add(arm); });
+    t.add(mesh(box(0.36, 0.14, 0.5), mat(0x30343c), 0, -0.82, -0.2));                // lap
+    t.add(mesh(box(0.12, 0.18, 0.02), mat(0xf2f2f2), 0.05, -0.62, -0.27));           // clipboard
+  }
   function buildOwnCar() {
     ownCar = new T.Group();
     ownCar.add(mesh(box(1.9, 0.75, 4.5), mat(0xe03832), 0, 0.6, 0));
@@ -706,11 +763,13 @@
       var dd = f.s - (p.s + 0.9);
       if (Math.abs(dd) < 2.2) bump += Math.cos(dd / 2.2 * Math.PI / 2) * Math.min(0.18, p.v * 0.012);
     });
-    camera.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22 + bump, p.y - ry * 0.36 - fy * 0.2);
+    rig.position.set(p.x - rx * 0.36 - fx * 0.2, 1.22 + bump, p.y - ry * 0.36 - fy * 0.2);
     updateSnow(p, dt);
     var foggy = G.course.pieceAt(p.s).st.fog, fn = foggy ? 6 : baseFog[0], ff = foggy ? 38 : baseFog[1];
     scene.fog.near += (fn - scene.fog.near) * Math.min(1, dt * 0.8); scene.fog.far += (ff - scene.fog.far) * Math.min(1, dt * 0.8);
-    camera.rotation.set(-0.04, -camA, 0);
+    rig.rotation.set(0, -camA, 0);
+    if (!dragging) { var back = Math.min(1, dt * 3); lookY -= lookY * back; lookP -= lookP * back; }
+    camera.rotation.set(-0.04 + lookP, -lookY, 0);
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
     var rate = dt > 0 ? api.angDiff(p.a, prevA) / dt : 0; prevA = p.a;
