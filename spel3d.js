@@ -71,8 +71,8 @@
     });
     canvas.addEventListener("pointermove", function (e) {
       if (!dragging) return;
-      lookY = Math.max(-1.75, Math.min(1.75, dragging.ly + (e.clientX - dragging.x) * 0.005));
-      lookP = Math.max(-0.6, Math.min(0.45, dragging.lp - (e.clientY - dragging.y) * 0.004));
+      lookY = Math.max(-1.35, Math.min(1.35, dragging.ly + (e.clientX - dragging.x) * 0.005));
+      lookP = Math.max(-0.45, Math.min(0.4, dragging.lp - (e.clientY - dragging.y) * 0.004));
     });
     function stop() { dragging = null; canvas.style.cursor = "grab"; }
     canvas.addEventListener("pointerup", stop); canvas.addEventListener("pointercancel", stop);
@@ -83,7 +83,7 @@
   // The inside of the red car: dashboard, steering wheel, bonnet and pillars, fixed to the camera.
   function buildCockpit() {
     cockpit = new T.Group(); rig.add(cockpit); cockpit.rotation.x = -0.04;
-    var dash = mat(0x2a2e33), dashTop = mat(0x1d2024), trim = mat(0x3a3f45), liner = mat(0xb9b3a7), door = mat(0x4a4f56), red = mat(0xe03832);
+    var dash = mat(0x2a2e33), dashTop = mat(0x1d2024), trim = mat(0x3a3f45), liner = new T.MeshLambertMaterial({ color: 0xb9b3a7, emissive: 0x67635b }), door = mat(0x4a4f56), red = mat(0xe03832);
     // Dashboard: a long body, a darker top under the windscreen and a hump over the gauges.
     cockpit.add(mesh(box(2.6, 0.34, 0.75), dash, 0.35, -0.54, -0.88));
     cockpit.add(mesh(box(2.6, 0.05, 0.5), dashTop, 0.35, -0.38, -1.05));
@@ -156,22 +156,34 @@
       var spk = mesh(new T.CircleGeometry(0.07, 12), mat(0x1a1d21), x + (x < 0 ? 0.045 : -0.045), -0.62, -0.55);   // speaker
       spk.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; cockpit.add(spk);
     });
+    // Roof side rails, so the side windows have a frame, and a floor.
+    [-0.62, 1.32].forEach(function (x) { cockpit.add(mesh(box(0.08, 0.08, 1.7), trim, x, 0.56, -0.15)); });
+    cockpit.add(mesh(box(2.0, 0.04, 1.6), mat(0x16181b), 0.35, -1.02, -0.35));
     // Seats: the driver's back behind the camera, the passenger's with the instructor in it.
     [0, 0.72].forEach(function (x) {
-      cockpit.add(mesh(box(0.5, 0.14, 0.52), seat, x, -0.86, 0.05));
-      var back = mesh(box(0.5, 0.75, 0.13), seat, x, -0.42, 0.38); back.rotation.x = 0.18; cockpit.add(back);
-      cockpit.add(mesh(box(0.3, 0.2, 0.1), seatSide, x, 0.08, 0.46));                  // head rest
+      var cush = mesh(new T.CapsuleGeometry(0.1, 0.32, 4, 10), seat, x, -0.86, 0.05); cockpit.add(cush); cush.rotation.z = Math.PI / 2; cush.scale.set(1.3, 1, 2.5);
+      var back = mesh(new T.CapsuleGeometry(0.12, 0.5, 4, 10), seat, x, -0.45, 0.38); back.rotation.x = 0.18; back.scale.set(2.0, 1, 0.6); cockpit.add(back);
+      var rest = mesh(new T.CapsuleGeometry(0.07, 0.12, 4, 10), seatSide, x, 0.02, 0.45); rest.rotation.z = Math.PI / 2; rest.scale.z = 0.7; cockpit.add(rest);
     });
+    // The instructor: rounded shapes, leaning into the seat, head turned a little towards the driver.
+    var soft = function (c) { return new T.MeshLambertMaterial({ color: c }); };
+    var shirt = soft(0x2d5d8a), skin = soft(0xe0b08a), trousers = soft(0x30343c);
     var t = new T.Group(); t.position.set(0.72, 0, 0.12); cockpit.add(t);
-    var shirt = mat(0x2d5d8a), skin = mat(0xe0b08a);
-    var body = mesh(box(0.4, 0.55, 0.22), shirt, 0, -0.5, 0.08); body.rotation.x = 0.15; t.add(body);
-    t.add(mesh(cyl(0.05, 0.05, 0.08, 8), skin, 0, -0.18, 0.05));
-    t.add(mesh(new T.SphereGeometry(0.11, 12, 10), skin, 0, -0.06, 0.04));
-    var hair = mesh(new T.SphereGeometry(0.115, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x5a3d26), 0, -0.04, 0.05); t.add(hair);
-    [-0.045, 0.045].forEach(function (x) { t.add(mesh(new T.SphereGeometry(0.014, 6, 6), mat(0x222222), x, -0.05, -0.065)); });   // eyes
-    [-0.24, 0.24].forEach(function (x) { var arm = mesh(box(0.09, 0.42, 0.1), shirt, x, -0.55, -0.05); arm.rotation.x = 0.6; t.add(arm); });
-    t.add(mesh(box(0.36, 0.14, 0.5), mat(0x30343c), 0, -0.82, -0.2));                // lap
-    t.add(mesh(box(0.12, 0.18, 0.02), mat(0xf2f2f2), 0.05, -0.62, -0.27));           // clipboard
+    var body = mesh(new T.CapsuleGeometry(0.16, 0.3, 6, 14), shirt, 0, -0.5, 0.14); body.rotation.x = 0.12; body.scale.z = 0.7; t.add(body);
+    t.add(mesh(new T.CylinderGeometry(0.045, 0.05, 0.1, 10), skin, 0, -0.2, 0.12));
+    var head = new T.Group(); head.position.set(0, -0.08, 0.1); head.rotation.y = 0.4; t.add(head);
+    head.add(mesh(new T.SphereGeometry(0.095, 18, 14), skin, 0, 0, 0));
+    var hair = mesh(new T.SphereGeometry(0.1, 18, 14), soft(0x5a3d26), 0, 0.025, 0.025); hair.scale.y = 0.95; head.add(hair);
+    [-0.033, 0.033].forEach(function (x) { head.add(mesh(new T.SphereGeometry(0.011, 8, 6), mat(0x222222), x, 0.005, -0.088)); });   // eyes
+    head.add(mesh(new T.SphereGeometry(0.016, 8, 6), skin, 0, -0.025, -0.095));                                                   // nose
+    [-1, 1].forEach(function (sd) {
+      var up = mesh(new T.CapsuleGeometry(0.045, 0.22, 4, 10), shirt, sd * 0.2, -0.47, 0.13); up.rotation.z = sd * 0.08; t.add(up);
+      var fore = mesh(new T.CapsuleGeometry(0.04, 0.2, 4, 10), shirt, sd * 0.15, -0.66, 0.0); fore.rotation.x = Math.PI / 2 - 0.25; t.add(fore);
+      t.add(mesh(new T.SphereGeometry(0.04, 10, 8), skin, sd * 0.12, -0.69, -0.13));                           // hand
+      var thigh = mesh(new T.CapsuleGeometry(0.07, 0.3, 4, 10), trousers, sd * 0.09, -0.76, -0.08); thigh.rotation.x = Math.PI / 2; t.add(thigh);
+      t.add(mesh(new T.CapsuleGeometry(0.06, 0.3, 4, 10), trousers, sd * 0.09, -0.95, -0.3));                 // shin
+    });
+    var clip = mesh(box(0.16, 0.012, 0.22), mat(0xf2f2f2), 0, -0.68, -0.18); clip.rotation.x = -0.5; t.add(clip);   // clipboard
   }
   function buildOwnCar() {
     ownCar = new T.Group();
