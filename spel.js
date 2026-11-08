@@ -96,7 +96,7 @@
   function Course(steps, game) {
     this.steps = steps; this.i = 0; this.game = game;
     this.pieces = []; this.signs = []; this.feats = [];
-    this.endS = 0; this.endP = { x: 0, y: 0, a: 0 }; this.pending = null;
+    this.endS = 0; this.endP = steps.start ? { x: steps.start.x, y: steps.start.y, a: steps.start.a } : { x: 0, y: 0, a: 0 }; this.pending = null;
     this.env = "stad"; this.limit = 50;
   }
   Course.prototype.build = function () {

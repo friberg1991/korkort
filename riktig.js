@@ -8,8 +8,9 @@
 "use strict";
 (function () {
   // Public map servers, tried in turn: a busy one answers with an error or not at all.
-  var OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter", "https://overpass-api.de/api/interpreter"];
+  // The main one often answers "busy" at once and does fine a moment later, so it is asked twice first.
+  var OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
   var SEARCH = "https://nominatim.openstreetmap.org/search";
   var ROADS = "trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
   var RANK = { trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
@@ -44,7 +45,11 @@
     return fetch(OVERPASS[i], { method: "POST", body: "data=" + encodeURIComponent(query), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ctl ? ctl.signal : undefined })
       .then(function (r) { if (!r.ok) throw new Error("overpass " + r.status); return r.json(); })
       .then(function (j) { clearTimeout(timer); return j; })
-      .catch(function (e) { clearTimeout(timer); if (i + 1 < OVERPASS.length) return overpass(query, i + 1); throw e; });
+      .catch(function (e) {
+        clearTimeout(timer);
+        if (i + 1 >= OVERPASS.length) throw e;
+        return new Promise(function (ok) { setTimeout(ok, 2000); }).then(function () { return overpass(query, i + 1); });
+      });
   }
   function load(lat, lon) {
     var ar = "(around:" + R_ROADS + "," + lat + "," + lon + ")", ah = "(around:" + R_HOUSES + "," + lat + "," + lon + ")";
@@ -180,6 +185,10 @@
     hs.forEach(function (x) { var p = hline(x).pts; (pts.length ? p.slice(1) : p).forEach(function (q) { pts.push(q); }); });
     return { hs: hs, end: v, kind: kind, line: line(pts) };
   }
+  function joinLegs(a, b) {
+    var pts = a.line.pts.concat(b.line.pts.slice(1));
+    return { hs: a.hs.concat(b.hs), end: b.end, kind: b.kind, line: line(pts) };
+  }
   function armsAt(v, last) {
     var hin = inHeading(last), out = [];
     v.edges.forEach(function (e) {
@@ -306,24 +315,53 @@
     });
     return out;
   }
-  function legSteps(run, leg, startKind, offset) {
+  // P is where the game's road starts (the way out of the junction before, always at right angles in the
+  // game, so a little off the real road); null for the first road, which starts on the real one.
+  function legSteps(run, leg, startKind, offset, P) {
     var cutS = startKind === "junction" ? run.jh : startKind === "round" ? run.rbArm : offset || 0;
+    // A junction too close for the game's junction to fit before it is driven straight through as part
+    // of the road (when the way goes straight on), so the next one still lands in its real place.
+    for (var guard = 0; leg.kind === "junction" && leg.line.len - cutS - run.jh < 12 && guard < 6; guard++) {
+      var ch0 = choose(armsAt(leg.end, leg.hs[leg.hs.length - 1]), jsec);
+      if (!ch0 || ch0.s !== 0) break;
+      leg = joinLegs(leg, legFrom(ch0.a.h));
+    }
     var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
-    var Lr = leg.line.len - cutS - cutE, len = Math.max(24, Math.round(Lr / DW) * DW), n = len / DW + 1;
-    // The bends: the heading every 2 m from the start, taken across 12 m so a corner becomes a curve.
-    var rel = [0], prev = 0;
-    for (var i = 0; i < n; i++) {
-      if (Lr < 24) { if (i) rel.push(0); continue; }
-      var t = cutS + i * DW, a = pointAt(leg.line, t - 6), b = pointAt(leg.line, t + 6), hd = headingOf(b.x - a.x, b.y - a.y);
-      if (i) rel.push(Math.round((rel[i - 1] + angDiff(hd, prev)) * 1e4) / 1e4);
-      prev = hd;
+    var Lr = leg.line.len - cutS - cutE, len, n, rel = [0], i, start = null;
+    if (Lr >= 12) {
+      // The real road's right lane, every metre, its heading taken across 12 m so a corner becomes a curve.
+      // The game's road starts where the game is and bends over to end where the real road ends, so a
+      // street driven twice lies in the same place both times.
+      var Q = [], R0 = null, h0 = 0, da = 0;
+      for (var w = 0; w <= Lr; w += 1) {
+        var t = cutS + w, a = pointAt(leg.line, t - 6), b = pointAt(leg.line, t + 6), q = pointAt(leg.line, t);
+        var hd = headingOf(b.x - a.x, b.y - a.y), r = { x: q.x + Math.cos(hd) * 1.75, y: q.y + Math.sin(hd) * 1.75 };
+        if (!R0) { R0 = r; h0 = hd; da = P ? angDiff(P.a, hd) : 0; start = { x: r.x, y: r.y, a: hd }; }
+        if (!P) { Q.push(r); continue; }
+        var f = Math.min(1, w / Lr), g = 1 - f * f * (3 - 2 * f), c = Math.cos(da), sn = Math.sin(da), vx = r.x - R0.x, vy = r.y - R0.y;
+        Q.push({ x: (P.x + vx * c - vy * sn) * g + r.x * (1 - g), y: (P.y + vx * sn + vy * c) * g + r.y * (1 - g) });
+      }
+      var QL = line(Q);
+      n = Math.max(2, Math.round(QL.len / DW) + 1); len = (n - 1) * DW;
+      var k = QL.len / len, prev = P ? P.a : h0;
+      for (i = 1; i < n; i++) {
+        var A = pointAt(QL, (i - 1) * DW * k), B = pointAt(QL, Math.min(QL.len, (i + 1) * DW * k));
+        var hh = headingOf(B.x - A.x, B.y - A.y);
+        rel.push(Math.round((rel[i - 1] + angDiff(hh, prev)) * 1e4) / 1e4);
+        prev = hh;
+      }
+    } else {
+      len = 12; n = len / DW + 1;
+      for (i = 1; i < n; i++) rel.push(0);
+      var q0 = pointAt(leg.line, cutS), q1 = pointAt(leg.line, cutS + 6), h1 = headingOf(q1.x - q0.x, q1.y - q0.y);
+      start = { x: q0.x + Math.cos(h1) * 1.75, y: q0.y + Math.sin(h1) * 1.75, a: h1 };
     }
     var main = leg.hs.reduce(function (m, x) { return x.e.len > m.e.len ? x : m; });
-    var lim = limitOf(main.e.tags), houses = Lr >= 24 ? housesAlong(run, leg.line, cutS, len) : [];
+    var lim = limitOf(main.e.tags), houses = Lr >= 20 ? housesAlong(run, leg.line, cutS, len) : [];
     var dens = houses.length / Math.max(len, 60) * 100;
     var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
     var limit = snap(lim || (env === "stad" ? 50 : 70));
-    var road = { type: "road", len: len, bend: rel, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [] };
+    var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [] };
     if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
     if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
     if (run.first) road.say.push([0, "Nu kör vi på riktiga gator" + (run.name ? " vid " + run.name.split(",")[0] : "") + ". Jag säger vart vi ska."]);
@@ -359,7 +397,7 @@
         var by = bySector(arms, jsec, ch), ctrl = sig || ctrlAt(leg, last, arms);
         var npcs = ctrl === "hoger" ? [{ from: "right", to: "straight" }] : ctrl === "huvud" ? [{ from: "right", to: "straight", prio: false }] :
           ctrl === "ljus" ? [] : [{ from: "left", to: "straight", eta: 1.2 }, { from: "right", to: "straight", eta: 1.6 }];
-        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, real: { by: by, back: H(last.e, !last.f) } };
+        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, real: { by: by, back: H(last.e, !last.f), key: leg.end.key } };
         var bad = [];
         [[1, "right"], [0, "fwd"], [-1, "left"]].forEach(function (x) { if (by[x[0]] && !by[x[0]].ok) bad.push(x[1]); });
         if (bad.length) { jst.noEntry = bad; jst.armSigns = bad.map(function (nm) { return { arm: nm, code: "C1" }; }); }
@@ -370,7 +408,7 @@
       var arms2 = armsAt(leg.end, last), ch2 = choose(arms2, rsec);
       if (ch2) {
         jst = { type: "round", want: ch2.s, good: "Bra i cirkulationsplatsen!", npcs: RND() < 0.6 ? [{ from: "left", to: "right" }] : [],
-          real: { by: bySector(arms2, rsec, ch2), back: H(last.e, !last.f) } };
+          real: { by: bySector(arms2, rsec, ch2), back: H(last.e, !last.f), key: leg.end.key } };
         var out2 = nameOf(ch2.a.h.e.tags);
         road.say.push([Math.max(1, len - 95), "I cirkulationsplatsen tar vi avfart nummer " + ch2.s + (out2 && out2 !== road.street ? " mot " + out2 : "") + "." +
           (ch2.s === 1 ? " Blinka höger redan när du kör in." : " Blinka höger när du har passerat avfarten före.")]);
@@ -422,7 +460,8 @@
     var h = H(best.e, f), leg = legFrom(h), off = f ? best.t : best.e.len - best.t;
     var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? run.rbArm : 0;
     off = Math.max(0, Math.min(off, leg.line.len - cutE - 80));
-    legSteps(run, leg, "start", off).forEach(function (s) { out.push(s); });
+    legSteps(run, leg, "start", off, null).forEach(function (s) { out.push(s); });
+    out.start = out[0].start;   // the game's world is the map's: the course starts on the real road
     out.onExit = function (pc, course) {
       var r = pc.st.real;
       if (!r) return;
@@ -433,7 +472,7 @@
         arm = ks.length ? r.by[ks[0]] : { h: r.back };
       }
       course.steps.length = course.i;
-      legSteps(run, legFrom(arm.h), pc.kind === "round" ? "round" : "junction").forEach(function (s) { course.steps.push(s); });
+      legSteps(run, legFrom(arm.h), pc.kind === "round" ? "round" : "junction", 0, course.endP).forEach(function (s) { course.steps.push(s); });
     };
     return out;
   }
