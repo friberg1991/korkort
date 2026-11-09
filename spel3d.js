@@ -379,10 +379,14 @@
     g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
     return new T.Mesh(g, new T.MeshLambertMaterial({ color: color, side: T.DoubleSide }));
   }
+  var mapPieces = 0, G3 = null;
   function buildMapRoads(api, A, p) {
     if (mapRoads) mapRoads.forEach(drop);
-    var walk = [], asph = [], r = MAP_R + 150;
+    var walk = [], asph = [], r = MAP_R + 150, drv = {};
+    G3.course.pieces.forEach(function (pc) { (pc.st.edges || []).forEach(function (i) { drv[i] = true; }); });
+    mapPieces = G3.course.pieces.length;
     A.edges.forEach(function (e) {
+      if (drv[e.i]) return;
       if (!e.pts.some(function (q) { return Math.abs(q.x - p.x) < r && Math.abs(q.y - p.y) < r; })) return;
       var w = api.roadWidth(e);
       ribbon(walk, e.pts, w + 5.2, -0.07); ribbon(asph, e.pts, w, -0.035);
@@ -441,7 +445,8 @@
     if (!A) return;
     if (G.t - mapT < 0.5 && G.t >= mapT) return;
     mapT = G.t;
-    if (!mapAt || Math.hypot(p.x - mapAt.x, p.y - mapAt.y) > 150) buildMapRoads(api, A, p);
+    G3 = G;
+    if (!mapAt || Math.hypot(p.x - mapAt.x, p.y - mapAt.y) > 150 || G.course.pieces.length !== mapPieces) buildMapRoads(api, A, p);
     var t0x = Math.floor((p.x - MAP_R) / TILE), t1x = Math.floor((p.x + MAP_R) / TILE), t0y = Math.floor((p.y - MAP_R) / TILE), t1y = Math.floor((p.y + MAP_R) / TILE);
     for (var tx = t0x; tx <= t1x; tx++) for (var ty = t0y; ty <= t1y; ty++) {
       var cx = (tx + 0.5) * TILE, cy = (ty + 0.5) * TILE;
@@ -1048,7 +1053,7 @@
     skyDome = new T.Mesh(geo, new T.MeshBasicMaterial({ vertexColors: true, side: T.BackSide, fog: false, depthWrite: false }));
     skyDome.renderOrder = -2; scene.add(skyDome);
     clouds = new T.Group();
-    var r = Math.random, cm = new T.MeshLambertMaterial({ color: 0xffffff, fog: false, flatShading: true });
+    var r = Math.random, cm = new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0x8c939b, fog: false, flatShading: true });   // lit from within, or the green ground light tints their undersides
     for (var c = 0; c < 14; c++) {
       var cl = new T.Group(), a = r() * Math.PI * 2, dist = 160 + r() * 160;
       for (var k = 0; k < 4; k++) {

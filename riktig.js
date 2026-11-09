@@ -417,7 +417,7 @@
         var hd = headingOf(b.x - a.x, b.y - a.y), r = { x: q.x + Math.cos(hd) * 1.75, y: q.y + Math.sin(hd) * 1.75 };
         if (!R0) { R0 = r; h0 = hd; da = P ? angDiff(P.a, hd) : 0; start = { x: r.x, y: r.y, a: hd }; }
         if (!P) { Q.push(r); continue; }
-        var f = Math.min(1, w / Lr), g = 1 - f * f * (3 - 2 * f), c = Math.cos(da), sn = Math.sin(da), vx = r.x - R0.x, vy = r.y - R0.y;
+        var f = Math.min(1, w / Math.min(Lr, 45)), g = 1 - f * f * (3 - 2 * f), c = Math.cos(da), sn = Math.sin(da), vx = r.x - R0.x, vy = r.y - R0.y;
         Q.push({ x: (P.x + vx * c - vy * sn) * g + r.x * (1 - g), y: (P.y + vx * sn + vy * c) * g + r.y * (1 - g) });
       }
       var QL = line(Q);
@@ -440,7 +440,8 @@
     var dens = houses.length / Math.max(len, 60) * 100;
     var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
     var limit = snap(lim || (env === "stad" ? 50 : 70));
-    var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [] };
+    var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
+      edges: leg.hs.map(function (x) { return x.e.i; }) };
     if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
     if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
     if (run.dest) {

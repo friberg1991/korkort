@@ -221,7 +221,17 @@
     if (!e.bb) { var b = [1e9, 1e9, -1e9, -1e9]; e.pts.forEach(function (q) { b[0] = Math.min(b[0], q.x); b[1] = Math.min(b[1], q.y); b[2] = Math.max(b[2], q.x); b[3] = Math.max(b[3], q.y); }); e.bb = b; }
     return e.bb;
   }
-  function mapEdgesNear(A, x, y, r) { return A.edges.filter(function (e) { var b = edgeBox(e); return b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; }); }
+  // The real streets the game's road already lays (it may lie a little beside the map's line just
+  // after a junction): drawing both would show two roads side by side.
+  function mapDriven() {
+    var set = {};
+    G.course.pieces.forEach(function (pc) { (pc.st.edges || []).forEach(function (i) { set[i] = true; }); });
+    return set;
+  }
+  function mapEdgesNear(A, x, y, r) {
+    var drv = mapDriven();
+    return A.edges.filter(function (e) { var b = edgeBox(e); return !drv[e.i] && b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; });
+  }
   function mapHousesNear(A, x, y, r, all) {
     var out = [], gx0 = Math.floor((x - r) / 60), gx1 = Math.floor((x + r) / 60), gy0 = Math.floor((y - r) / 60), gy1 = Math.floor((y + r) / 60);
     for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) (A.grid[gx + "," + gy] || []).forEach(function (h) { if (all || !h.hide) out.push(h); });
@@ -1801,6 +1811,8 @@
         }
         continue;
       }
+      // Other motor vehicles do not crash into you (his choice): you drive through them. People, animals and trains still do.
+      if (/^(car|bus|truck|amb|police|tractor)$/.test(n.kind)) continue;
       if (overlap(me, boxOf(n, npcPose(n)))) {
         var what = { ped: "en gående", stroll: "en gående", cyclist: "en cyklist", cone: "hindret", officer: "polisen", police: "polisbilen", bike: "en cyklist", horse: "hästen", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
@@ -2056,10 +2068,22 @@
     }
   }
 
+  // On a real map a junction's arms stop just past it: the map draws the real streets on from there.
+  function armLen(pc) { return pc.st.real ? 3 : ARM; }
   function drawJunction(pc, pass) {
+    var ARM = armLen(pc);
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad", verge = stad ? COL.walk : COL.grass;
     var arms = [270, 0, 90, 180].filter(function (a) { return a === 270 || pc.arms[a]; });
+    if (pc.st.real && pass < 2) {
+      // On a real map: an open, rounded crossing that the map's own streets (at their real angles,
+      // with their own pavements) run into, instead of a square with pavement corners.
+      if (pass === 1) {
+        disc(COL.asph, 0, 0, JH + 1.2);
+        arms.forEach(function (a) { if (a === 270) return; ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.asph, -HW, HW, -JH - ARM, -JH + 0.01); ctx.restore(); });
+      }
+      ctx.restore(); return;
+    }
     if (pass === 0) {
       if (stad) {
         rect(COL.walk, -JH - 2.6, JH + 2.6, -JH - 2.6, JH + 2.6);
@@ -2095,6 +2119,7 @@
   }
 
   function drawRound(pc, pass) {
+    var ARM = armLen(pc);
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad";
     var arms = pc.st.turn ? [270] : [270, 0, 90, 180];
