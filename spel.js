@@ -1819,7 +1819,10 @@
       }
     }
   }
+  // Crashes are switched off for now (his wish, to try things out): set NO_CRASH to false to bring them back.
+  var NO_CRASH = true;
   function crash(text) {
+    if (NO_CRASH) return;
     if (G.crashed) return;
     G.crashed = true; G.p.v = 0;
     G.faults.push({ title: text, info: FAULT_INFO.crash, serious: true, kind: "crash", t: G.t });
