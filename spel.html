@@ -104,6 +104,14 @@ a { color: var(--accent); }
 .osm-note { font-size: 12px; }
 #street { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(68px + env(safe-area-inset-bottom)); max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 4px 12px; border-radius: 10px; background: #1d4f9c; border: 2px solid #f2f4f6; color: #fff; font-size: 15px; font-weight: 700; pointer-events: none; z-index: 4; }
+/* Small map in the top right corner, turning with the car; a button switches to the satellite image. */
+#mini { position: absolute; right: 10px; top: calc(86px + env(safe-area-inset-top)); width: 150px; height: 150px; border-radius: 16px; overflow: hidden;
+  border: 2px solid rgba(255,255,255,0.75); box-shadow: 0 4px 18px rgba(0,0,0,0.4); background: #709c54; z-index: 3; }
+#miniCv { position: static; display: block; width: 100%; height: 100%; }
+#miniSat { position: absolute; right: 5px; bottom: 5px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.4); background: rgba(13,18,23,0.75); font-size: 17px; padding: 0; }
+#miniSat.on { background: rgba(12,210,157,0.85); }
+#miniCredit { position: absolute; left: 6px; bottom: 3px; font-size: 8px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 2px #000; pointer-events: none; }
+#game.withMini #gps { top: calc(244px + env(safe-area-inset-top)); width: 150px; }
 #osm { position: absolute; left: 8px; bottom: calc(3px + env(safe-area-inset-bottom)); font-size: 10px; color: rgba(255,255,255,0.75); text-shadow: 0 1px 2px #000; pointer-events: none; z-index: 4; }
 .verdict { font-size: 28px; font-weight: 800; margin: 8px 0 4px; }
 .verdict.ok { color: #7fe0a4; } .verdict.no { color: #f0a09c; }
@@ -216,6 +224,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   <div id="flash"></div>
   <div id="say"><div class="face">🧑‍🏫</div><div><div class="who">LÄRAREN</div><div class="text" id="sayText"></div></div></div>
   <div id="osm" hidden>© OpenStreetMap</div>
+  <div id="mini" hidden><canvas id="miniCv"></canvas><div id="miniCredit"></div><button id="miniSat" type="button" aria-label="Satellitbild">🛰️</button></div>
   <div id="gps" hidden><div class="row1"><div id="gpsArrow">↑</div><div id="gpsDist"></div></div><div id="gpsInto"></div><div id="gpsTo"></div></div>
   <div id="street" hidden></div>
   <div id="fact" class="fact"><b>💡 Visste du att…</b><span id="factText"></span></div>

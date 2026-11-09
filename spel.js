@@ -535,6 +535,8 @@
     document.getElementById("rv").hidden = !L.reverse;
     document.getElementById("osm").hidden = !L.real;
     G.gps = L.real ? realDest : null; G.gpsKey = null;
+    document.getElementById("mini").hidden = !L.real;
+    gameEl.classList.toggle("withMini", !!L.real);
     if (L.real && realArea && realArea.grid) { Object.keys(realArea.grid).forEach(function (k) { realArea.grid[k].forEach(function (h) { h.hide = false; }); }); realArea.hideVer = 0; }
     document.getElementById("gps").hidden = !G.gps;
     document.getElementById("street").hidden = true;
@@ -2426,8 +2428,73 @@
       document.getElementById("gpsTo").textContent = to;
     }
   }
+  // ---------- the small map in the corner ----------
+  // The game's own map (streets and houses), turned so ahead is up, the car in the middle; with the
+  // satellite button on, aerial photos are laid over it (they need internet; without, the map shows).
+  var miniCv = document.getElementById("miniCv"), miniCtx = miniCv.getContext("2d"), miniT = -9, tiles = {};
+  var MINI_M = 280;            // metres across the small map
+  var SAT_Z = 17, SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var miniSatBtn = document.getElementById("miniSat");
+  miniSatBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); store.miniSat = !store.miniSat; saveStore(); miniT = -9; });
+  function tileImg(z, x, y) {
+    var k = z + "/" + y + "/" + x, t = tiles[k];
+    if (!t) {
+      t = tiles[k] = new Image();
+      t.onload = function () { t.ok = true; miniT = -9; };
+      t.src = SAT_URL + k;
+    }
+    return t.ok ? t : null;
+  }
+  function drawMini() {
+    var A = mapArea();
+    if (!A) return;
+    if (G.t - miniT < 0.15 && G.t >= miniT) return;
+    miniT = G.t;
+    var size = Math.round(miniCv.clientWidth * DPR) || 300;
+    if (miniCv.width !== size) { miniCv.width = miniCv.height = size; }
+    var p = G.p, sc = size / MINI_M, saved = ctx;
+    ctx = miniCtx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
+    ctx.save();
+    ctx.translate(size / 2, size * 0.6); ctx.rotate(-p.a); ctx.scale(sc, sc); ctx.translate(-p.x, -p.y);
+    drawMap(p.x, p.y, MINI_M);
+    drawPieces();
+    if (G.gps) {   // the street we are going to, in the GPS colour
+      ctx.strokeStyle = "rgba(12,210,157,0.9)"; ctx.lineCap = ctx.lineJoin = "round"; ctx.lineWidth = 5;
+      A.edges.forEach(function (e) {
+        if ((e.tags.name || (e.tags.ref ? "Väg " + e.tags.ref.split(";")[0] : "")) !== G.gps) return;
+        ctx.beginPath(); e.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.stroke();
+      });
+    }
+    ctx.restore();
+    var sat = !!store.miniSat && A.lat != null;
+    if (sat) {
+      // Web Mercator tiles around the car, scaled and turned to the same view.
+      var K = 111320, lat = A.lat - p.y / K, lon = A.lon + p.x / (K * Math.cos(A.lat * DEG)), n = Math.pow(2, SAT_Z);
+      var fx = (lon + 180) / 360 * n, lr = lat * DEG, fy = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
+      var mpp = 156543.034 * Math.cos(lr) / n, k = mpp * sc, tx0 = Math.floor(fx), ty0 = Math.floor(fy), R = 2;
+      ctx.save(); ctx.translate(size / 2, size * 0.6); ctx.rotate(-p.a); ctx.scale(k, k);
+      for (var i = -R; i <= R; i++) for (var j = -R; j <= R; j++) {
+        var im = tileImg(SAT_Z, tx0 + i, ty0 + j);
+        if (im) ctx.drawImage(im, (tx0 + i - fx) * 256, (ty0 + j - fy) * 256, 256.6, 256.6);
+      }
+      ctx.restore();
+    }
+    // The car: an arrow pointing ahead.
+    ctx.save(); ctx.translate(size / 2, size * 0.6); var u = size / 30;
+    ctx.fillStyle = "#e03832"; ctx.strokeStyle = "#fff"; ctx.lineWidth = u * 0.5;
+    ctx.beginPath(); ctx.moveTo(0, -u * 1.8); ctx.lineTo(u * 1.2, u * 1.3); ctx.lineTo(0, u * 0.6); ctx.lineTo(-u * 1.2, u * 1.3); ctx.closePath(); ctx.stroke(); ctx.fill();
+    ctx.restore();
+    ctx = saved;
+    miniSatBtn.classList.toggle("on", sat);
+    var cr = sat ? "Bild © Esri, Maxar" : "© OpenStreetMap";
+    if (miniCredit.textContent !== cr) miniCredit.textContent = cr;
+  }
+  var miniCredit = document.getElementById("miniCredit");
   function drawHud(pc) {
     pc = pc || curPiece();
+    drawMini();
     drawGps(pc);
     var kmh = Math.round(Math.abs(G.p.v) * KMH);
     hud.speed.textContent = kmh;
