@@ -338,13 +338,14 @@
       for (var gy = Math.floor((y - r) / 60); gy <= Math.floor((y + r) / 60); gy++) cellTrees(A, gx + "," + gy).forEach(function (t) { out.push(t); });
     return out;
   }
-  function drawMap(x, y, r, all) {
+  function drawMap(x, y, r, all, part) {
     var A = mapArea();
     if (!A) return;
-    drawLands(A, x, y, r);
-    var es = mapEdgesNear(A, x, y, r, all);
+    if (!part || part === "ground") drawLands(A, x, y, r);
+    var es = part === "things" ? [] : mapEdgesNear(A, x, y, r, all);
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     [[COL.walk, 1], [COL.asph, 0]].forEach(function (pass) {
+      if (part && (part === "ground") !== (pass[1] === 1)) return;
       ctx.strokeStyle = pass[0];
       es.forEach(function (e) {
         ctx.lineWidth = mapRoadWidth(e) + pass[1] * mapWalk(e); ctx.beginPath();
@@ -353,6 +354,7 @@
       });
     });
     ctx.lineCap = "butt"; ctx.lineJoin = "miter";
+    if (part && part !== "things") return;
     var path = function (h, dx, dy, k) {
       ctx.beginPath();
       h.pts.forEach(function (q, i) { var px = h.cx + (q.x - h.cx) * k + dx, py = h.cy + (q.y - h.cy) * k + dy; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
@@ -2473,7 +2475,7 @@
     ctx.translate(W / 2, H * 0.66); ctx.rotate(-c.a); ctx.scale(c.sc, c.sc); ctx.translate(-c.x, -c.y);
     var reach = Math.hypot(W, H) / c.sc;
     speckles(ctx, c.x - reach, c.y - reach, reach * 2, reach * 2);
-    drawMap(c.x, c.y, reach);
+    mapView = { x: c.x, y: c.y, r: reach };
     drawPieces();
     drawBarriers();
     G.npcs.forEach(function (n) {
@@ -2507,6 +2509,7 @@
     var pc = curPiece();
     if (pc.env === "stad") { ctx.fillStyle = "rgba(255,226,150,0.06)"; ctx.fillRect(0, 0, W, H); }
   }
+  var mapView = null;   // set just before drawPieces when the real map is to be drawn with it
   function drawPieces() {
     var vis = G.course.pieces.filter(function (q) { return q.s0 - G.p.s < 320 && G.p.s - (q.s0 + (q.len || 0)) < 140; });
     // The road also runs on behind where the lesson starts, so the mirrors show a road.
@@ -2518,7 +2521,11 @@
       lead.decor = (first.decor || []).filter(function (d) { return d.w + (d.len || 0) < 130; });
       vis.unshift(lead);
     }
+    // With the real map: its pavements go under every road surface and its streets under the
+    // course's lines, so no kerb or pavement is painted across another street.
+    var mv = mapView; mapView = null;
     for (var pass = 0; pass < 3; pass++) {
+      if (mv) drawMap(mv.x, mv.y, mv.r, false, pass === 0 ? "ground" : pass === 1 ? "asph" : "things");
       vis.forEach(function (q) {
         if (q.kind === "road" || q.kind === "mv") { if (pass === 0) drawRoadGround(q); else if (pass === 1) drawRoadAsphalt(q); else drawRoadMarks(q); }
         else if (q.kind === "junction") drawJunction(q, pass);
@@ -2533,7 +2540,7 @@
     ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
     ctx.save(); ctx.translate(size / 2, size / 2); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
     speckles(ctx, cx - size / sc / 2, cy - size / sc / 2, size / sc, size / sc);
-    drawMap(cx, cy, size / sc * 0.75);
+    mapView = { x: cx, y: cy, r: size / sc * 0.75 };
     drawPieces();
     ctx.restore();
     ctx = saved;
