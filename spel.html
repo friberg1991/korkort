@@ -85,6 +85,9 @@ a { color: var(--accent); }
 .lesson.home { border-color: rgba(12,210,157,0.5); background: linear-gradient(135deg, #12302a, #151b21); }
 .lesson.home .num { background: #0f3b31; }
 .gpslist .btn { text-align: left; }
+.seg { display: flex; gap: 6px; margin: 8px 0 4px; }
+.seg button { flex: 1; padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--btn); font-weight: 650; }
+.seg button.on { background: var(--accent); color: #06231a; border-color: var(--accent); }
 .gpsq { display: block; width: 100%; box-sizing: border-box; }
 /* GPS box while driving: next turn, how far, where to */
 #gps { position: absolute; right: 10px; top: calc(86px + env(safe-area-inset-top)); width: min(230px, calc(100% - 20px)); padding: 10px 12px; border-radius: 16px;
@@ -186,7 +189,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <div class="badgebox"><div id="badges"></div><div id="badgeText"></div></div>
     <div class="group">Eskilstuna</div>
     <button id="eskil" class="lesson home" type="button"><span class="num">🏠</span><span class="txt"><span class="name">Kör i Eskilstuna</span><br><span class="what">Hoppa in direkt på Eskilstunas riktiga gator.</span></span></button>
-    <button id="eskilGps" class="lesson home" type="button"><span class="num">🧭</span><span class="txt"><span class="name">GPS i Eskilstuna</span><br><span class="what">Välj en gata, så visar GPS:en och läraren vägen dit.</span></span></button>
+    <button id="skog" class="lesson home" type="button"><span class="num">🏡</span><span class="txt"><span class="name">Kör i Skogstorp</span><br><span class="what">Hoppa in direkt på gatorna hemma i Skogstorp.</span></span></button>
+    <button id="eskilGps" class="lesson home" type="button"><span class="num">🧭</span><span class="txt"><span class="name">GPS</span><br><span class="what">Välj en gata i Eskilstuna eller Skogstorp, så visar GPS:en och läraren vägen dit.</span></span></button>
     <p id="eskilMsg" role="status"></p>
     <button id="daily" class="lesson daily" type="button"><span class="num">📅</span><span class="txt"><span class="name">Dagens körning</span><br><span class="what dsub"></span></span></button>
     <div id="weak" class="weak" hidden></div>
@@ -238,7 +242,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 <div id="gpsPick" class="screen" hidden>
   <div class="wrap">
     <h1>Vart ska vi?</h1>
-    <p>Skriv gatan du vill köra till i Eskilstuna och välj den i listan.</p>
+    <div id="gpsHomes" class="seg"><button type="button" data-home="eskilstuna">Eskilstuna</button><button type="button" data-home="skogstorp">Skogstorp</button></div>
+    <p>Skriv gatan du vill köra till och välj den i listan.</p>
     <input id="gpsQ" class="gpsq" type="search" placeholder="Till exempel Kungsgatan" autocomplete="off" enterkeyhint="search">
     <p id="gpsMsg" role="status"></p>
     <div id="gpsList" class="gpslist"></div>

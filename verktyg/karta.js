@@ -1,9 +1,10 @@
-// Gör eskilstuna.json: Eskilstunas vägar och hus från OpenStreetMap, packade så att spelet
-// kan starta direkt och utan internet. Kör: node verktyg/eskilstuna-karta.js
+// Gör eskilstuna.json och skogstorp.json: vägar och hus från OpenStreetMap, packade så att spelet
+// kan starta direkt och utan internet. Kör: node verktyg/karta.js [skogstorp]
 // Kartdata © OpenStreetMap-bidragsgivare (ODbL).
 "use strict";
 const fs = require("fs"), path = require("path");
-const LAT = 59.3712, LON = 16.5094, R_ROADS = 4000, R_HOUSES = 3000;
+const PLACES = { eskilstuna: [59.3712, 16.5094, 4000, 3000], skogstorp: [59.32496, 16.48529, 2500, 2000] };
+const NAME = process.argv[2] || "eskilstuna", [LAT, LON, R_ROADS, R_HOUSES] = PLACES[NAME];
 const ROADS = "trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
 const KEEP = ["highway", "name", "ref", "oneway", "maxspeed", "junction", "motor_vehicle", "motorcar", "access", "area", "crossing", "traffic_calming"];
 const q = `[out:json][timeout:180];way["highway"~"^(${ROADS})$"](around:${R_ROADS},${LAT},${LON});out body qt;node(w);out body qt;` +
@@ -29,7 +30,7 @@ function tagsOf(t) { if (!t) return null; const o = {}; let any = false; KEEP.fo
       out.b.push([e.id, parseFloat(e.tags["building:levels"]) || 0, g]);
     } else if (e.type === "way" && e.tags && e.tags.highway) out.w.push([e.id, e.nodes, tagsOf(e.tags)]);
   });
-  const file = path.join(__dirname, "..", "eskilstuna.json");
+  const file = path.join(__dirname, "..", NAME + ".json");
   fs.writeFileSync(file, JSON.stringify(out));
   console.log(file, (fs.statSync(file).size / 1e6).toFixed(2) + " MB", out.w.length + " vägar", out.b.length + " hus");
 })().catch(e => { console.error(e); process.exit(1); });

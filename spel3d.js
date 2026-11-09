@@ -360,7 +360,109 @@
     lightSets = lightSets.filter(function (l) { if (far(l.groups[0])) { l.groups.forEach(drop); return false; } return true; });
     railSets = railSets.filter(function (r) { return r.f.s > p.s - 450; });
   }
+  // ---------- the real map: every street and house out to 500 m ----------
+  // Streets are flat ribbons just under the painted ground, so they show past its edge; houses are
+  // the map's own outlines raised to walls and a roof, merged into one mesh per 120 m square.
+  var MAP_R = 500, TILE = 120, mapRoads = null, mapAt = null, mapTiles = {}, mapT = -9, mapMat = null;
+  function ribbon(pos, pts, w, y) {
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+      if (l < 0.05) continue;
+      var ux = dx / l, uy = dy / l, e = w * 0.3, nx = -uy * w / 2, ny = ux * w / 2;
+      var ax = a.x - ux * e, ay = a.y - uy * e, bx = b.x + ux * e, by = b.y + uy * e;
+      pos.push(ax + nx, y, ay + ny, bx + nx, y, by + ny, bx - nx, y, by - ny, ax + nx, y, ay + ny, bx - nx, y, by - ny, ax - nx, y, ay - ny);
+    }
+  }
+  function flatMesh(pos, color) {
+    var g = new T.BufferGeometry(), nrm = [];
+    for (var i = 0; i < pos.length; i += 3) nrm.push(0, 1, 0);
+    g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
+    return new T.Mesh(g, new T.MeshLambertMaterial({ color: color, side: T.DoubleSide }));
+  }
+  function buildMapRoads(api, A, p) {
+    if (mapRoads) mapRoads.forEach(drop);
+    var walk = [], asph = [], r = MAP_R + 150;
+    A.edges.forEach(function (e) {
+      if (!e.pts.some(function (q) { return Math.abs(q.x - p.x) < r && Math.abs(q.y - p.y) < r; })) return;
+      var w = api.roadWidth(e);
+      ribbon(walk, e.pts, w + 5.2, -0.07); ribbon(asph, e.pts, w, -0.035);
+    });
+    mapRoads = [flatMesh(walk, api.COL.walk), flatMesh(asph, api.COL.asph)];
+    mapRoads.forEach(function (m) { scene.add(m); });
+    mapAt = { x: p.x, y: p.y };
+  }
+  function buildTile(api, A, tx, ty) {
+    var pos = [], nrm = [], col = [], hidden = 0, COL = api.COL;
+    var hs = api.housesNear(A, tx * TILE + TILE / 2, ty * TILE + TILE / 2, TILE / 2, true).filter(function (h) {
+      return Math.floor(h.cx / TILE) === tx && Math.floor(h.cy / TILE) === ty;
+    });
+    hs.forEach(function (h) {
+      if (h.hide) { hidden++; return; }
+      var P = h.pts, n = P.length, area = 0, i;
+      for (i = 0; i < n; i++) { var a = P[i], b = P[(i + 1) % n]; area += a.x * b.y - b.x * a.y; }
+      var H = h.h || 5.5 + (h.id % 5) * 0.9, sgn = area > 0 ? 1 : -1;
+      var wc = new T.Color(COL.houses[h.id % COL.houses.length]), rc = new T.Color(COL.roofs[Math.floor(h.id / 7) % COL.roofs.length]);
+      for (i = 0; i < n; i++) {
+        var A0 = P[i], B0 = P[(i + 1) % n], dx = B0.x - A0.x, dy = B0.y - A0.y, l = Math.hypot(dx, dy) || 1;
+        var nx = dy / l * sgn, nz = -dx / l * sgn;
+        pos.push(A0.x, 0, A0.y, B0.x, 0, B0.y, B0.x, H, B0.y, A0.x, 0, A0.y, B0.x, H, B0.y, A0.x, H, A0.y);
+        for (var k = 0; k < 6; k++) { nrm.push(nx, 0, nz); col.push(wc.r, wc.g, wc.b); }
+      }
+      var big = Math.abs(area) / 2;
+      if (big < 350) {
+        // A villa: a pitched roof rising from every wall to a point above the middle.
+        var cx = 0, cz = 0;
+        P.forEach(function (q) { cx += q.x; cz += q.y; }); cx /= n; cz /= n;
+        var top = H + Math.min(3.6, 0.32 * Math.sqrt(big));
+        for (i = 0; i < n; i++) {
+          var a1 = P[i], b1 = P[(i + 1) % n];
+          var ux = b1.x - a1.x, uz = b1.y - a1.y, vx = cx - a1.x, vy = top - H, vz = cz - a1.y;
+          var fx = -(uz * vy), fy = uz * vx - ux * vz, fz = ux * vy, fl = Math.hypot(fx, fy, fz) || 1;
+          if (fy < 0) { fx = -fx; fy = -fy; fz = -fz; }
+          pos.push(a1.x, H, a1.y, b1.x, H, b1.y, cx, top, cz);
+          for (var k2 = 0; k2 < 3; k2++) { nrm.push(fx / fl, fy / fl, fz / fl); col.push(rc.r, rc.g, rc.b); }
+        }
+      } else {
+        var tris = T.ShapeUtils.triangulateShape(P.map(function (q) { return new T.Vector2(q.x, q.y); }), []);
+        tris.forEach(function (t) {
+          t.forEach(function (ix) { pos.push(P[ix].x, H, P[ix].y); nrm.push(0, 1, 0); col.push(rc.r, rc.g, rc.b); });
+        });
+      }
+    });
+    if (!mapMat) mapMat = keep(new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide }));
+    var g = new T.BufferGeometry();
+    g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
+    g.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+    var m = new T.Mesh(g, mapMat); scene.add(m);
+    return { mesh: m, hidden: hidden, hs: hs };
+  }
+  function updateMap(api, G) {
+    var A = api.mapArea(), p = G.p;
+    if (!A) return;
+    if (G.t - mapT < 0.5 && G.t >= mapT) return;
+    mapT = G.t;
+    if (!mapAt || Math.hypot(p.x - mapAt.x, p.y - mapAt.y) > 150) buildMapRoads(api, A, p);
+    var t0x = Math.floor((p.x - MAP_R) / TILE), t1x = Math.floor((p.x + MAP_R) / TILE), t0y = Math.floor((p.y - MAP_R) / TILE), t1y = Math.floor((p.y + MAP_R) / TILE);
+    for (var tx = t0x; tx <= t1x; tx++) for (var ty = t0y; ty <= t1y; ty++) {
+      var cx = (tx + 0.5) * TILE, cy = (ty + 0.5) * TILE;
+      if (Math.hypot(cx - p.x, cy - p.y) > MAP_R + TILE * 0.7) continue;
+      var k = tx + "," + ty, tl = mapTiles[k];
+      if (tl && tl.hs.filter(function (h) { return h.hide; }).length === tl.hidden) continue;
+      if (tl) drop(tl.mesh);
+      mapTiles[k] = buildTile(api, A, tx, ty);
+    }
+    Object.keys(mapTiles).forEach(function (k) {
+      var xy = k.split(",").map(Number);
+      if (Math.hypot((xy[0] + 0.5) * TILE - p.x, (xy[1] + 0.5) * TILE - p.y) > MAP_R + TILE * 2) { drop(mapTiles[k].mesh); delete mapTiles[k]; }
+    });
+  }
+  function clearMap() {
+    if (mapRoads) mapRoads.forEach(drop);
+    Object.keys(mapTiles).forEach(function (k) { drop(mapTiles[k].mesh); });
+    mapRoads = null; mapAt = null; mapTiles = {}; mapT = -9;
+  }
   function clearAll() {
+    clearMap();
     objs.forEach(drop);
     Object.keys(npcMeshes).forEach(function (k) { drop(npcMeshes[k]); });
     signMeshes.forEach(function (o) { drop(o.obj); });
@@ -1031,7 +1133,14 @@
     if (failed) return;
     var api = window.SPEL.api;
     canvas.style.display = "";
-    if (G !== lastG) { clearAll(); lastG = G; lastPieces = 0; lastLook = { "-1": -99, "1": -99 }; camA = G.p.a; setWeather(G.lesson.weather); }
+    if (G !== lastG) {
+      clearAll(); lastG = G; lastPieces = 0; lastLook = { "-1": -99, "1": -99 }; camA = G.p.a; setWeather(G.lesson.weather);
+      // On the real map one sees far: the haze starts later and the painted forest ring moves out.
+      var real = !!api.mapArea();
+      if (real) { scene.fog.near = 140; scene.fog.far = MAP_R; baseFog = [140, MAP_R]; }
+      forest.scale.set(real ? 2.7 : 1, real ? 1.6 : 1, real ? 2.7 : 1);
+      camera.far = real ? 720 : 500; camera.updateProjectionMatrix();
+    }
     var p = G.p;
     // The ground texture follows the car, centred a little ahead.
     var fx = Math.sin(p.a), fy = -Math.cos(p.a);
@@ -1053,6 +1162,7 @@
       if (f.kind === "rail" && !f.built3d && Math.abs(f.s - p.s) < 260) { f.built3d = true; railSets.push(buildRail(api, G, f)); }
     });
     if (G.t - tidyT > 2 || G.t < tidyT) { tidyT = G.t; tidy(G); }
+    updateMap(api, G);
     updateRails(api, G);
     updateLights(api);
     updateNpcs(api, G, dt);

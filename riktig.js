@@ -59,7 +59,7 @@
     return overpass(q).then(function (json) { return makeArea(json, lat, lon); });
   }
 
-  // A map packed with the app (verktyg/eskilstuna-karta.js makes it): no waiting for the map servers,
+  // A map packed with the app (verktyg/karta.js makes it): no waiting for the map servers,
   // and it works without internet. It is unpacked to the shape the servers send.
   function loadFile(url) {
     return fetch(url).then(function (r) { if (!r.ok) throw new Error("map " + r.status); return r.json(); }).then(function (m) {

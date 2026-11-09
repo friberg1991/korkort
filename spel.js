@@ -212,9 +212,71 @@
     }
     pc.segs = segs.map(function (k) { return k * DW; });
   }
+  // ---------- the real map around the car: every street and house, not only the road driven ----------
+  // So nothing seems to appear out of nowhere: side streets, the roads past a junction and all the
+  // houses are there from the start. The houses are the map's own shapes; only those the game's
+  // road would run over are left out.
+  function mapArea() { return G && G.lesson.real && realArea && realArea.grid ? realArea : null; }
+  function edgeBox(e) {
+    if (!e.bb) { var b = [1e9, 1e9, -1e9, -1e9]; e.pts.forEach(function (q) { b[0] = Math.min(b[0], q.x); b[1] = Math.min(b[1], q.y); b[2] = Math.max(b[2], q.x); b[3] = Math.max(b[3], q.y); }); e.bb = b; }
+    return e.bb;
+  }
+  function mapEdgesNear(A, x, y, r) { return A.edges.filter(function (e) { var b = edgeBox(e); return b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; }); }
+  function mapHousesNear(A, x, y, r, all) {
+    var out = [], gx0 = Math.floor((x - r) / 60), gx1 = Math.floor((x + r) / 60), gy0 = Math.floor((y - r) / 60), gy1 = Math.floor((y + r) / 60);
+    for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) (A.grid[gx + "," + gy] || []).forEach(function (h) { if (all || !h.hide) out.push(h); });
+    return out;
+  }
+  function mapRoadWidth(e) { return e.rank >= 4 ? 9 : e.rank === 3 ? 7.5 : e.rank === 0 ? 5 : 6.5; }
+  // Whether point q is inside house h, or closer to its walls than m.
+  function nearHouse(h, q, m) {
+    var P = h.pts, n = P.length, inside = false, i, j;
+    if (!h.bb) { h.bb = [1e9, 1e9, -1e9, -1e9]; P.forEach(function (a) { h.bb[0] = Math.min(h.bb[0], a.x); h.bb[1] = Math.min(h.bb[1], a.y); h.bb[2] = Math.max(h.bb[2], a.x); h.bb[3] = Math.max(h.bb[3], a.y); }); }
+    if (q.x < h.bb[0] - m || q.x > h.bb[2] + m || q.y < h.bb[1] - m || q.y > h.bb[3] + m) return false;
+    for (i = 0, j = n - 1; i < n; j = i++) {
+      var a = P[i], b = P[j];
+      if ((a.y > q.y) !== (b.y > q.y) && q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+      var dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-6, f = clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / l2, 0, 1);
+      if (Math.hypot(a.x + dx * f - q.x, a.y + dy * f - q.y) < m) return true;
+    }
+    return inside;
+  }
+  function hideMapHouses(A, pts) {
+    pts.forEach(function (q) {
+      mapHousesNear(A, q.x, q.y, 8).forEach(function (h) { if (nearHouse(h, q, 6.5)) { h.hide = true; A.hideVer = (A.hideVer || 0) + 1; } });
+    });
+  }
+  function drawMap(x, y, r) {
+    var A = mapArea();
+    if (!A) return;
+    var es = mapEdgesNear(A, x, y, r);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    [[COL.walk, 5.2], [COL.asph, 0]].forEach(function (pass) {
+      ctx.strokeStyle = pass[0];
+      es.forEach(function (e) {
+        ctx.lineWidth = mapRoadWidth(e) + pass[1]; ctx.beginPath();
+        e.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
+        ctx.stroke();
+      });
+    });
+    ctx.lineCap = "butt"; ctx.lineJoin = "miter";
+    var path = function (h, dx, dy, k) {
+      ctx.beginPath();
+      h.pts.forEach(function (q, i) { var px = h.cx + (q.x - h.cx) * k + dx, py = h.cy + (q.y - h.cy) * k + dy; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+      ctx.closePath();
+    };
+    mapHousesNear(A, x, y, r).forEach(function (h) {
+      var roof = COL.roofs[Math.floor(h.id / 7) % COL.roofs.length];
+      path(h, 0.9, 1.1, 1); ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fill();
+      path(h, 0, 0, 1); ctx.fillStyle = COL.houses[h.id % COL.houses.length]; ctx.fill();
+      path(h, 0, 0, 0.86); ctx.fillStyle = roof; ctx.fill();
+      path(h, -0.25, -0.25, 0.5); ctx.fillStyle = "rgba(255,255,255,0.10)"; ctx.fill();
+    });
+  }
   // Houses from the map, and trees where there is room.
   function realDecor(pc) {
-    var st = pc.st, r = rng(pc.s0 * 7 + 13), out = (st.houses || []).map(function (d) {
+    var MA = realArea && realArea.grid ? realArea : null;
+    var st = pc.st, r = rng(pc.s0 * 7 + 13), out = (MA ? [] : st.houses || []).map(function (d) {
       var o = Object.assign({}, d);
       o.c = COL.houses[d.id % COL.houses.length]; o.roof = COL.roofs[Math.floor(d.id / 7) % COL.roofs.length];
       return o;
@@ -223,6 +285,8 @@
     var n = pc.env === "stad" ? (out.length > 2 ? 0 : pc.len / 30) : pc.len / 10;
     for (var i = 0; i < n; i++) {
       var side = r() < 0.5 ? 1 : -1, w = 6 + r() * (pc.len - 12), u = side > 0 ? 7 + r() * 22 : -11 - r() * 22;
+      var tq = MA ? pc.at(u, w) : null;
+      if (tq && mapHousesNear(MA, tq.x, tq.y, 12).some(function (h) { return nearHouse(h, tq, 3); })) continue;
       if (!busy(u, w)) out.push({ t: "tree", u: u, w: w, r: 1.6 + r() * 1.8 });
     }
     // Nothing may stand on another road: real junctions are drawn with straight arms, so a house
@@ -242,6 +306,7 @@
     var mine = [];
     for (var t = 0; t <= pc.len; t += 3) mine.push(pc.at(-1.75, t));
     pc.course.pieces.forEach(function (q) { if (q.index > pc.index) mine = mine.concat(piecePoints(q)); });
+    if (MA) hideMapHouses(MA, mine);
     pc.course.pieces.forEach(function (q) {
       if (q === pc || !q._decor) return;
       q._decor.forEach(function (d) {
@@ -460,6 +525,7 @@
     document.getElementById("rv").hidden = !L.reverse;
     document.getElementById("osm").hidden = !L.real;
     G.gps = L.real ? realDest : null; G.gpsKey = null;
+    if (L.real && realArea && realArea.grid) { Object.keys(realArea.grid).forEach(function (k) { realArea.grid[k].forEach(function (h) { h.hide = false; }); }); realArea.hideVer = 0; }
     document.getElementById("gps").hidden = !G.gps;
     document.getElementById("street").hidden = true;
     show("game");
@@ -2241,6 +2307,7 @@
     ctx.translate(W / 2, H * 0.66); ctx.rotate(-c.a); ctx.scale(c.sc, c.sc); ctx.translate(-c.x, -c.y);
     var reach = Math.hypot(W, H) / c.sc;
     speckles(ctx, c.x - reach, c.y - reach, reach * 2, reach * 2);
+    drawMap(c.x, c.y, reach);
     drawPieces();
     drawBarriers();
     G.npcs.forEach(function (n) {
@@ -2300,6 +2367,7 @@
     ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
     ctx.save(); ctx.translate(size / 2, size / 2); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
     speckles(ctx, cx - size / sc / 2, cy - size / sc / 2, size / sc, size / sc);
+    drawMap(cx, cy, size / sc * 0.75);
     drawPieces();
     ctx.restore();
     ctx = saved;
@@ -2592,53 +2660,66 @@
   document.getElementById("pause").addEventListener("click", pause);
   // ---------- real roads: pick a place ----------
   var realArea = null, realIdx = -1, placeBusy = false, realDest = null;
-  // ---------- Eskilstuna: the map comes with the app, so the drive starts at once ----------
-  var eskArea = null, eskBusy = false;
+  // ---------- Eskilstuna and Skogstorp: the maps come with the app, so a drive starts at once ----------
+  var HOMES = {
+    eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json", lat: 59.3712, lon: 16.5094 },
+    skogstorp: { name: "Skogstorp", file: "skogstorp.json", lat: 59.32496, lon: 16.48529 }
+  };
+  var homeAreas = {}, homeBusy = false, gpsHome = "eskilstuna";
   function eskMsg(id, t) { document.getElementById(id).textContent = t || ""; }
-  function withEskilstuna(msgId, then) {
-    if (eskArea) return then(eskArea);
-    if (eskBusy) return;
-    eskBusy = true; eskMsg(msgId, "Laddar Eskilstuna…");
-    window.RIKTIG.loadFile("eskilstuna.json").then(function (area) {
-      eskBusy = false; eskMsg(msgId, "");
-      area.name = "Eskilstuna"; area.lat = 59.3712; area.lon = 16.5094; eskArea = area; then(area);
-    }).catch(function () { eskBusy = false; eskMsg(msgId, "Kunde inte läsa in kartan över Eskilstuna. Försök igen."); });
+  function withHome(id, msgId, then) {
+    if (homeAreas[id]) return then(homeAreas[id]);
+    if (homeBusy) return;
+    var H = HOMES[id];
+    homeBusy = true; eskMsg(msgId, "Laddar " + H.name + "…");
+    window.RIKTIG.loadFile(H.file).then(function (area) {
+      homeBusy = false; eskMsg(msgId, "");
+      area.name = H.name; area.lat = H.lat; area.lon = H.lon; homeAreas[id] = area; then(area);
+    }).catch(function () { homeBusy = false; eskMsg(msgId, "Kunde inte läsa in kartan över " + H.name + ". Försök igen."); });
   }
-  function driveEskilstuna(dest) {
-    withEskilstuna(dest ? "gpsMsg" : "eskilMsg", function (area) {
+  function driveHome(id, dest) {
+    withHome(id, dest ? "gpsMsg" : "eskilMsg", function (area) {
       realArea = area; realDest = dest || null;
       startLesson(LESSONS.findIndex(function (L) { return L.real; }));
     });
   }
-  document.getElementById("eskil").addEventListener("click", function () { driveEskilstuna(null); });
+  document.getElementById("eskil").addEventListener("click", function () { driveHome("eskilstuna", null); });
+  document.getElementById("skog").addEventListener("click", function () { driveHome("skogstorp", null); });
+  // Streets driven to lately, newest first; older saves held only Eskilstuna's names.
+  function gpsLast() { return (store.gpsLast || []).map(function (x) { return typeof x === "string" ? { p: "eskilstuna", n: x } : x; }); }
+  function gpsButton(box, n) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "📍 " + n;
+    b.addEventListener("click", function () {
+      store.gpsLast = [{ p: gpsHome, n: n }].concat(gpsLast().filter(function (x) { return x.p !== gpsHome || x.n !== n; })).slice(0, 6); saveStore();
+      driveHome(gpsHome, n);
+    });
+    box.appendChild(b);
+  }
   function gpsList() {
-    var q = document.getElementById("gpsQ").value.trim().toLowerCase(), box = document.getElementById("gpsList");
+    var q = document.getElementById("gpsQ").value.trim().toLowerCase(), box = document.getElementById("gpsList"), A = homeAreas[gpsHome];
     box.innerHTML = "";
-    if (!eskArea) return;
-    var all = eskArea.streetList || (eskArea.streetList = window.RIKTIG.streets(eskArea));
+    document.querySelectorAll("#gpsHomes button").forEach(function (b) { b.classList.toggle("on", b.dataset.home === gpsHome); });
+    if (!A) return;
+    var all = A.streetList || (A.streetList = window.RIKTIG.streets(A));
     var hits = q ? all.filter(function (n) { return n.toLowerCase().indexOf(q) >= 0; }) : [];
     hits.sort(function (a, b) { return (a.toLowerCase().indexOf(q) === 0 ? 0 : 1) - (b.toLowerCase().indexOf(q) === 0 ? 0 : 1); });
-    hits.slice(0, 8).forEach(function (n) {
-      var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "📍 " + n;
-      b.addEventListener("click", function () {
-        store.gpsLast = [n].concat((store.gpsLast || []).filter(function (x) { return x !== n; })).slice(0, 4); saveStore();
-        driveEskilstuna(n);
-      });
-      box.appendChild(b);
-    });
-    eskMsg("gpsMsg", q && !hits.length ? "Hittade ingen gata med det namnet på kartan." : "");
-    if (!q && (store.gpsLast || []).length) {
+    hits.slice(0, 8).forEach(function (n) { gpsButton(box, n); });
+    eskMsg("gpsMsg", q && !hits.length ? "Hittade ingen gata med det namnet i " + HOMES[gpsHome].name + "." : "");
+    var last = gpsLast().filter(function (x) { return x.p === gpsHome; });
+    if (!q && last.length) {
       var h = document.createElement("div"); h.className = "group"; h.textContent = "Senast"; box.appendChild(h);
-      store.gpsLast.forEach(function (n) {
-        var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "📍 " + n;
-        b.addEventListener("click", function () { driveEskilstuna(n); });
-        box.appendChild(b);
-      });
+      last.forEach(function (x) { gpsButton(box, x.n); });
     }
   }
+  function gpsOpen(id) {
+    gpsHome = id; gpsList();
+    withHome(id, "gpsMsg", function () { gpsList(); document.getElementById("gpsQ").focus(); });
+  }
   document.getElementById("eskilGps").addEventListener("click", function () {
-    show("gpsPick"); document.getElementById("gpsQ").value = ""; gpsList();
-    withEskilstuna("gpsMsg", function () { gpsList(); document.getElementById("gpsQ").focus(); });
+    show("gpsPick"); document.getElementById("gpsQ").value = ""; gpsOpen(store.gpsHome || "eskilstuna");
+  });
+  document.querySelectorAll("#gpsHomes button").forEach(function (b) {
+    b.addEventListener("click", function () { store.gpsHome = b.dataset.home; saveStore(); document.getElementById("gpsQ").value = ""; gpsOpen(b.dataset.home); });
   });
   document.getElementById("gpsQ").addEventListener("input", gpsList);
   document.getElementById("gpsBack").addEventListener("click", function () { buildMenu(); show("menu"); });
@@ -3020,7 +3101,7 @@
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
     draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, housesNear: mapHousesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");
