@@ -445,7 +445,13 @@
   function say(text, tone, urgent) {
     if (!G) return;
     if (urgent) { G.msg.length = 0; G.cur = null; if (window.speechSynthesis) speechSynthesis.cancel(); }
-    G.msg.push({ text: text, tone: tone || "" });
+    // A warning goes first, so it is heard while it still helps.
+    // The message it cuts off is said again right after, so no instruction is lost.
+    if (tone === "warn") {
+      if (G.cur && G.curT > 0 && G.cur.tone !== "warn") G.msg.unshift(G.cur);
+      G.msg.unshift({ text: text, tone: tone }); G.curT = 0; if (window.speechSynthesis) speechSynthesis.cancel();
+    }
+    else G.msg.push({ text: text, tone: tone || "" });
   }
   function updateSay(dt) {
     G.curT -= dt;
@@ -453,7 +459,7 @@
       G.cur = G.msg.shift();
       G.curT = Math.max(3.2, G.cur.text.length * 0.065);
       sayText.textContent = G.cur.text;
-      sayEl.className = G.cur.tone;
+      sayEl.className = G.cur.tone; void sayEl.offsetWidth; sayEl.classList.add("pop");
       speak(G.cur.text);
     }
   }
@@ -606,11 +612,21 @@
     G.faults.push({ title: title, info: FAULT_INFO[kind] || "", serious: !!serious, kind: kind, t: G.t });
     if (G.lesson.exam) return;
     say(title, "bad", true);
-    flash(); beep(serious ? 220 : 330, 0.18);
+    flash("on"); beep(serious ? 220 : 330, 0.18);
+    shake(serious ? "big" : "small");
   }
-  function praise(text) { if (!G.lesson.exam) say(text, "good"); }
+  function praise(text) { if (!G.lesson.exam) { say(text, "good"); flash("good"); beep(880, 0.08, 0.025); setTimeout(function () { beep(1320, 0.12, 0.025); }, 90); } }
   var flashEl = document.getElementById("flash");
-  function flash() { flashEl.classList.add("on"); setTimeout(function () { flashEl.classList.remove("on"); }, 120); }
+  // A red edge for a fault, a soft green one for praise.
+  function flash(kind) {
+    flashEl.classList.remove("on", "good"); void flashEl.offsetWidth; flashEl.classList.add(kind);
+    setTimeout(function () { flashEl.classList.remove(kind); }, kind === "good" ? 220 : 160);
+  }
+  // A short jolt of the view at a fault (switched off by the system's "reduce motion").
+  var gameEl = document.getElementById("game");
+  function shake(size) {
+    gameEl.classList.remove("shake-small", "shake-big"); void gameEl.offsetWidth; gameEl.classList.add("shake-" + size);
+  }
 
   // ---------- input ----------
   function setBlink(dir) {
@@ -1029,7 +1045,12 @@
       if (f.kind === "bump" && crossedFront(f.s) && kmh > lim + 7) fault("bump:" + f.s, "För fort över farthindret!", false);
     });
     // Speed: more than 5 km/h over for two seconds.
+    // A gentle word first (once per stretch of road), so the fault never comes out of nowhere.
     if (kmh > lim + 5) p.overT += dt; else p.overT = 0;
+    if (kmh > lim + 2) G.warnT = (G.warnT || 0) + dt; else G.warnT = 0;
+    if (G.warnT > 0.4 && !G.lesson.exam && !G.faultKeys["speed:" + pc.index] && G.warnSpeed !== pc.index) {
+      G.warnSpeed = pc.index; say("Lite för fort, släpp gasen. Här gäller " + lim + " km/h.", "warn");
+    }
     if (p.overT > 2) fault("speed:" + pc.index, "För fort! Här gäller " + lim + " km/h.", kmh > lim + 15);
     // Driving on the wrong side of a two-lane road.
     if (pc.kind === "road" && p.d < -1.2) {
@@ -1049,6 +1070,9 @@
     if (ahead && p.v > 30 / KMH) {
       var gap = ahead.s - ahead.hl - p.s - CAR.hl;
       if (gap / p.v < 1.0) p.closeT += dt; else p.closeT = Math.max(0, p.closeT - dt);
+      if (p.closeT > 1 && !G.lesson.exam && !G.faultKeys["close:" + pc.index] && G.warnClose !== pc.index) {
+        G.warnClose = pc.index; say("Du närmar dig bilen framför. Släpp gasen och håll avstånd.", "warn");
+      }
       if (p.closeT > 2.5) fault("close:" + pc.index, "Du ligger för nära bilen framför. Håll större avstånd.", false);
     } else p.closeT = Math.max(0, p.closeT - dt);
   }
@@ -1657,7 +1681,7 @@
     if (G.crashed) return;
     G.crashed = true; G.p.v = 0;
     G.faults.push({ title: text, info: FAULT_INFO.crash, serious: true, kind: "crash", t: G.t });
-    say(text, "bad", true); flash(); beep(110, 0.5, 0.08);
+    say(text, "bad", true); flash("on"); beep(110, 0.5, 0.08); shake("big");
     G.finishT = G.t + 1.6;
   }
 
@@ -1734,6 +1758,35 @@
     });
   }
 
+  // A house from above: wall edge, then a hip roof whose four sides catch the light differently
+  // (sun from the upper left), a ridge along the long side, and a chimney on some of them.
+  function shadeHex(hex, f) {
+    var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    var m = function (c) { return Math.round(clamp(f > 0 ? c + (255 - c) * f : c * (1 + f), 0, 255)); };
+    return "rgb(" + m(r) + "," + m(g) + "," + m(b) + ")";
+  }
+  function drawHouse(x, y, w, h, wall, roof, seed) {
+    ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fillRect(x + 0.9, y + 1.1, w, h);
+    ctx.fillStyle = wall; ctx.fillRect(x, y, w, h);
+    var e = 0.5, x0 = x + e, y0 = y + e, x1 = x + w - e, y1 = y + h - e, r;
+    // Ridge: along the longer side, inset by half the shorter side.
+    var rx0, ry0, rx1, ry1;
+    if (h >= w) { r = (x1 - x0) / 2; rx0 = rx1 = x0 + r; ry0 = y0 + r; ry1 = y1 - r; }
+    else { r = (y1 - y0) / 2; ry0 = ry1 = y0 + r; rx0 = x0 + r; rx1 = x1 - r; }
+    var face = function (pts, f) { ctx.fillStyle = shadeHex(roof, f); ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (var i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.closePath(); ctx.fill(); };
+    face([x0, y0, x1, y0, rx1, ry0, rx0, ry0], 0.22);   // top: towards the sun
+    face([x0, y0, rx0, ry0, rx1, ry1, x0, y1], 0.08);   // left
+    face([x1, y0, x1, y1, rx1, ry1, rx0, ry0], -0.22);  // right: in shade
+    face([x0, y1, rx0, ry1, rx1, ry1, x1, y1], -0.32); // bottom
+    ctx.strokeStyle = shadeHex(roof, 0.35); ctx.lineWidth = 0.18;
+    ctx.beginPath(); ctx.moveTo(rx0, ry0); ctx.lineTo(rx1, ry1); ctx.stroke();
+    if (Math.abs(Math.sin(seed)) > 0.4) {
+      var cx = rx0 + (rx1 - rx0) * 0.3 + (h >= w ? 0.8 : 0), cy = ry0 + (ry1 - ry0) * 0.3 + (h >= w ? 0 : 0.8);
+      ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(cx - 0.35, cy - 0.15, 1, 1);
+      ctx.fillStyle = "#7a5a4c"; ctx.fillRect(cx - 0.5, cy - 0.5, 0.9, 0.9);
+      ctx.fillStyle = "#2a2a2a"; ctx.fillRect(cx - 0.3, cy - 0.3, 0.5, 0.5);
+    }
+  }
   function drawRoadGround(pc) { inFrame(pc, drawRoadGroundL); }
   function drawRoadGroundL(pc) {
     var L = pc.len;
@@ -1744,10 +1797,7 @@
       rect(COL.walk, 1.75 + pr, 1.75 + pr + 2.6, 0, L); rect(COL.walk, -5.25 - 2.6, -5.25, 0, L);
       pc.decor.forEach(function (d) {
         if (d.t !== "house" || d.gone) return;
-        ctx.fillStyle = "rgba(0,0,0,0.18)"; ctx.fillRect(d.u + 0.6, -d.w - d.len + 0.8, d.dep, d.len);
-        ctx.fillStyle = d.c; ctx.fillRect(d.u, -d.w - d.len, d.dep, d.len);
-        ctx.fillStyle = d.roof; ctx.fillRect(d.u + 0.8, -d.w - d.len + 0.8, d.dep - 1.6, d.len - 1.6);
-        ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(d.u + 0.8, -d.w - d.len / 2 - 0.15, d.dep - 1.6, 0.3);
+        drawHouse(d.u, -d.w - d.len, d.dep, d.len, d.c, d.roof, d.u * 3 + d.w);
       });
       pc.decor.forEach(function (d) { if (d.t === "tree") { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); } });
     } else {
@@ -1975,7 +2025,18 @@
       if (Math.floor(G.t * 2) % 2) { disc(COL.orange, 0, 0.6, 0.25); }
     } else {
       var body = kind === "amb" ? "#f0e040" : kind === "police" ? "#f2f4f6" : n.color;
+      // Wheels just showing at the corners, and the side mirrors.
+      ctx.fillStyle = "#16181b";
+      [-1, 1].forEach(function (sd) { ctx.fillRect(sd * hw - 0.13, -hl * 0.68, 0.26, 0.75); ctx.fillRect(sd * hw - 0.13, hl * 0.42, 0.26, 0.75); });
       ctx.fillStyle = body; rr(-hw, -hl, hw * 2, hl * 2, 0.6); ctx.fill();
+      ctx.fillRect(-hw - 0.22, -hl * 0.32, 0.3, 0.22); ctx.fillRect(hw - 0.08, -hl * 0.32, 0.3, 0.22);
+      // A soft shine along the middle, so the car looks rounded rather than flat.
+      var sh = ctx.createLinearGradient(-hw, 0, hw, 0);
+      sh.addColorStop(0, "rgba(0,0,0,0.18)"); sh.addColorStop(0.35, "rgba(255,255,255,0.10)"); sh.addColorStop(0.65, "rgba(255,255,255,0.04)"); sh.addColorStop(1, "rgba(0,0,0,0.22)");
+      ctx.fillStyle = sh; rr(-hw, -hl, hw * 2, hl * 2, 0.6); ctx.fill();
+      // Rear lights: dim when driving, bright with a glow when braking.
+      ctx.fillStyle = n.brake ? "#ff3b30" : "#8a1c18"; ctx.fillRect(-hw + 0.12, hl - 0.18, 0.45, 0.16); ctx.fillRect(hw - 0.57, hl - 0.18, 0.45, 0.16);
+      if (n.brake) { disc("rgba(255,59,48,0.28)", -hw + 0.35, hl, 0.7); disc("rgba(255,59,48,0.28)", hw - 0.35, hl, 0.7); }
       if (kind === "police") { ctx.fillStyle = "#1d4fa8"; ctx.fillRect(-hw, -0.4, hw * 2, 0.5); ctx.fillStyle = COL.yellow; ctx.fillRect(-hw, 0.1, hw * 2, 0.25); }
       if (kind === "amb") { ctx.fillStyle = "#2e9660"; for (var k = -hl + 0.6; k < hl - 0.4; k += 0.8) ctx.fillRect(((k * 10) % 2 ? -hw : hw - 0.35), k, 0.35, 0.4); }
       ctx.fillStyle = COL.glass;
@@ -2123,7 +2184,7 @@
       else if (n.mode === "train") drawTrain(n);
       else drawVehicle(n, npcPose(n));
     });
-    drawVehicle({ kind: "car", hl: CAR.hl, hw: CAR.hw, color: COL.red, blink: G.p.blink }, { x: G.p.x, y: G.p.y, a: G.p.a });
+    drawVehicle({ kind: "car", hl: CAR.hl, hw: CAR.hw, color: COL.red, blink: G.p.blink, brake: keys.brake && Math.abs(G.p.v) > 0.3 }, { x: G.p.x, y: G.p.y, a: G.p.a });
     ctx.restore();
     if (G_NIGHT) drawNight();
     if (G.lesson.weather === "rain") drawRain();
@@ -2184,8 +2245,12 @@
     var kmh = Math.round(Math.abs(G.p.v) * KMH);
     hud.speed.textContent = kmh;
     var lim = G.limit || pc.limit;
-    hud.speed.className = kmh > lim + 3 ? "over" : "";
-    hud.limit.textContent = lim;
+    hud.speed.className = kmh > lim + 5 ? "over" : kmh > lim ? "warn" : "";
+    if (G.limitShown !== lim) {
+      // A new limit: the sign pops so it is noticed (not at the very start of a lesson).
+      if (G.limitShown !== undefined) { hud.limit.classList.remove("new"); void hud.limit.offsetWidth; hud.limit.classList.add("new"); }
+      G.limitShown = lim; hud.limit.textContent = lim;
+    }
     // On real roads: the street we are on (kept through a junction until the next street starts).
     if (pc.kind === "road" && pc.st.street !== undefined) G.street = pc.st.street;
     if (G.street !== G.streetShown) { G.streetShown = G.street; hud.street.textContent = G.street || ""; hud.street.hidden = !G.street; }

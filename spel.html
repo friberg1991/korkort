@@ -124,7 +124,29 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
 .fact.show { opacity: 1; transform: none; pointer-events: auto; }
 .fact b { display: block; color: var(--gold); font-size: 12px; letter-spacing: .03em; margin-bottom: 2px; }
 #flash { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 rgba(192,68,63,0); transition: box-shadow .4s; }
-#flash.on { box-shadow: inset 0 0 0 10px rgba(192,68,63,0.85); transition: none; }
+#flash.on { box-shadow: inset 0 0 0 10px rgba(192,68,63,0.85), inset 0 0 90px 20px rgba(192,68,63,0.45); transition: none; }
+#flash.good { box-shadow: inset 0 0 0 4px rgba(47,158,90,0.7), inset 0 0 70px 10px rgba(47,158,90,0.3); transition: none; }
+/* Teacher's bubble: slides in with each new message; amber for a friendly early warning. */
+#say.pop { animation: sayIn .28s ease-out; }
+@keyframes sayIn { from { opacity: 0; transform: translateY(-10px) scale(0.97); } to { opacity: 1; transform: none; } }
+#say.warn { border-color: #e6a23a; background: rgba(60,44,14,0.92); }
+#say.warn .face { background: #5a4214; }
+#say.bad .face { background: #5a1e1b; }
+#say.good .face { background: #1e4a30; }
+/* Speed: white within the limit, amber just over, red and pulsing well over. */
+#speed { transition: color .2s; }
+#speed.warn { color: #ffc96b; }
+#speed.over { animation: overPulse .7s ease-in-out infinite; }
+@keyframes overPulse { 50% { color: #ff4d42; transform: scale(1.08); } }
+#limit.new { animation: limitNew .9s ease-out; }
+@keyframes limitNew { 0% { transform: scale(1.6); box-shadow: 0 0 0 0 rgba(255,192,64,0.8); } 100% { transform: none; box-shadow: 0 0 0 14px rgba(255,192,64,0); } }
+#game.shake-small canvas { animation: shakeS .25s linear; }
+#game.shake-big canvas { animation: shakeB .45s linear; }
+@keyframes shakeS { 20% { transform: translate(-4px, 2px); } 40% { transform: translate(4px, -2px); } 60% { transform: translate(-3px, 1px); } 80% { transform: translate(2px, 0); } }
+@keyframes shakeB { 10% { transform: translate(-9px, 4px); } 25% { transform: translate(8px, -5px); } 40% { transform: translate(-7px, 3px); } 55% { transform: translate(6px, -2px); } 70% { transform: translate(-4px, 2px); } 85% { transform: translate(2px, -1px); } }
+@media (prefers-reduced-motion: reduce) {
+  #game.shake-small canvas, #game.shake-big canvas, #say.pop, #speed.over, #limit.new { animation: none; }
+}
 
 /* Touch pad: blinkers left, pedals right */
 #pad { position: absolute; left: 0; right: 0; bottom: calc(70px + env(safe-area-inset-bottom)); height: 0; }

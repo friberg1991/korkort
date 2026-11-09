@@ -309,13 +309,13 @@
     // Speed dial on the left, 0 to 160.
     var cx = 120, cy = 104, R = 78;
     x.lineWidth = 6; x.strokeStyle = "#2b3238"; x.beginPath(); x.arc(cx, cy, R, Math.PI * 0.8, Math.PI * 2.2); x.stroke();
-    x.strokeStyle = "#0cd29d"; x.beginPath(); x.arc(cx, cy, R, Math.PI * 0.8, Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160)); x.stroke();
+    x.strokeStyle = kmh > limit + 5 ? "#ff5a4f" : kmh > limit ? "#ffc96b" : "#0cd29d"; x.beginPath(); x.arc(cx, cy, R, Math.PI * 0.8, Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160)); x.stroke();
     x.fillStyle = "#8a9299"; x.font = "600 15px system-ui, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
     for (var v = 0; v <= 160; v += 40) { var aa = Math.PI * (0.8 + 1.4 * v / 160); x.fillText(String(v), cx + Math.cos(aa) * (R - 22), cy + Math.sin(aa) * (R - 22)); }
     var na = Math.PI * (0.8 + 1.4 * Math.min(kmh, 160) / 160);
     x.strokeStyle = "#ff5a3c"; x.lineWidth = 4; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(na) * (R - 8), cy + Math.sin(na) * (R - 8)); x.stroke();
     // Speed in figures in the middle; red when over the limit.
-    x.fillStyle = kmh > limit + 3 ? "#ff8a80" : "#f2f4f5"; x.font = "800 64px system-ui, sans-serif"; x.fillText(String(Math.abs(kmh)), 300, 92);
+    x.fillStyle = kmh > limit + 5 ? "#ff5a4f" : kmh > limit ? "#ffc96b" : "#f2f4f5"; x.font = "800 64px system-ui, sans-serif"; x.fillText(String(Math.abs(kmh)), 300, 92);
     if (gearR) { x.fillStyle = "#ffc040"; x.font = "800 26px system-ui, sans-serif"; x.fillText("R", 214, 126); }
     x.fillStyle = "#8a9299"; x.font = "600 17px system-ui, sans-serif"; x.fillText("km/h", 300, 136);
     // The speed limit, as the car's sign reading shows it.
