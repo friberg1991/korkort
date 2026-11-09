@@ -81,7 +81,21 @@ a { color: var(--accent); }
 .btn { display: block; width: 100%; padding: 13px; margin: 8px 0 0; border: 0; border-radius: 12px; background: var(--btn); text-align: center; text-decoration: none; color: var(--text); }
 .btn.primary { background: var(--accent); color: #06231a; font-weight: 700; }
 .placeform { display: flex; gap: 8px; }
-.placeform input { flex: 1; min-width: 0; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+/* Eskilstuna: the two cards at the top of the menu */
+.lesson.home { border-color: rgba(12,210,157,0.5); background: linear-gradient(135deg, #12302a, #151b21); }
+.lesson.home .num { background: #0f3b31; }
+.gpslist .btn { text-align: left; }
+.gpsq { display: block; width: 100%; box-sizing: border-box; }
+/* GPS box while driving: next turn, how far, where to */
+#gps { position: absolute; right: 10px; top: calc(86px + env(safe-area-inset-top)); width: min(230px, calc(100% - 20px)); padding: 10px 12px; border-radius: 16px;
+  background: rgba(10,40,34,0.9); border: 1px solid rgba(12,210,157,0.5); box-shadow: 0 4px 18px rgba(0,0,0,0.35); pointer-events: none; }
+#gps .row1 { display: flex; align-items: center; gap: 10px; }
+#gpsArrow { flex: none; width: 46px; height: 46px; border-radius: 12px; background: #0cd29d; color: #06221b; display: grid; place-items: center; font-size: 30px; font-weight: 900; line-height: 1; }
+#gpsDist { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+#gpsInto { font-size: 14px; color: var(--text); margin-top: 6px; }
+#gpsTo { font-size: 12px; color: #8fd8c3; margin-top: 4px; }
+#gps.done #gpsArrow { background: var(--gold); }
+.gpsq, .placeform input { flex: 1; min-width: 0; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
 .placeform .btn { width: auto; padding: 13px 18px; }
 #placeList .btn { text-align: left; }
 .osm-note { font-size: 12px; }
@@ -170,6 +184,10 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <div class="hero"><div class="car">🚗</div><h1>Övningskörning</h1></div>
     <p>Du kör, läraren sitter bredvid och säger vad du ska göra. Följ trafikreglerna så blir det godkänt.</p>
     <div class="badgebox"><div id="badges"></div><div id="badgeText"></div></div>
+    <div class="group">Eskilstuna</div>
+    <button id="eskil" class="lesson home" type="button"><span class="num">🏠</span><span class="txt"><span class="name">Kör i Eskilstuna</span><br><span class="what">Hoppa in direkt på Eskilstunas riktiga gator.</span></span></button>
+    <button id="eskilGps" class="lesson home" type="button"><span class="num">🧭</span><span class="txt"><span class="name">GPS i Eskilstuna</span><br><span class="what">Välj en gata, så visar GPS:en och läraren vägen dit.</span></span></button>
+    <p id="eskilMsg" role="status"></p>
     <button id="daily" class="lesson daily" type="button"><span class="num">📅</span><span class="txt"><span class="name">Dagens körning</span><br><span class="what dsub"></span></span></button>
     <div id="weak" class="weak" hidden></div>
     <div id="lessons"></div>
@@ -194,6 +212,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
   <div id="flash"></div>
   <div id="say"><div class="face">🧑‍🏫</div><div><div class="who">LÄRAREN</div><div class="text" id="sayText"></div></div></div>
   <div id="osm" hidden>© OpenStreetMap</div>
+  <div id="gps" hidden><div class="row1"><div id="gpsArrow">↑</div><div id="gpsDist"></div></div><div id="gpsInto"></div><div id="gpsTo"></div></div>
   <div id="street" hidden></div>
   <div id="fact" class="fact"><b>💡 Visste du att…</b><span id="factText"></span></div>
   <div id="pad">
@@ -213,6 +232,18 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <span id="speed">0</span><span id="kmh">km/h</span>
     <div id="limit">50</div>
     <span class="blink" id="hudR">▶</span>
+  </div>
+</div>
+
+<div id="gpsPick" class="screen" hidden>
+  <div class="wrap">
+    <h1>Vart ska vi?</h1>
+    <p>Skriv gatan du vill köra till i Eskilstuna och välj den i listan.</p>
+    <input id="gpsQ" class="gpsq" type="search" placeholder="Till exempel Kungsgatan" autocomplete="off" enterkeyhint="search">
+    <p id="gpsMsg" role="status"></p>
+    <div id="gpsList" class="gpslist"></div>
+    <button class="btn" id="gpsBack" type="button">Tillbaka</button>
+    <p class="osm-note">Kartdata © OpenStreetMap-bidragsgivare</p>
   </div>
 </div>
 

@@ -459,6 +459,8 @@
     G.rec = []; G.recT = 0; G.p.high = false; G.p.gear = "D"; G.aquaT = 0;
     document.getElementById("rv").hidden = !L.reverse;
     document.getElementById("osm").hidden = !L.real;
+    G.gps = L.real ? realDest : null; G.gpsKey = null;
+    document.getElementById("gps").hidden = !G.gps;
     document.getElementById("street").hidden = true;
     show("game");
     ensureAudio();
@@ -552,7 +554,7 @@
   }
   // What fits the moment goes before a general fact, and is dropped if it waits too long.
   function wantFact(text, general) {
-    if (!text || G.factShown[text]) return;
+    if (!text || G.factShown[text] || G.gps) return;
     if (G.factNext && (G.factNext.general ? general : true)) return;
     G.factNext = { text: text, general: !!general, at: G.t };
   }
@@ -2302,8 +2304,35 @@
     ctx.restore();
     ctx = saved;
   }
+  // GPS box: the next turn and how far to it, then how far to the street we are going to.
+  var gpsEl = document.getElementById("gps"), ARROW = { "0": "↑", "1": "↱", "-1": "↰" };
+  function drawGps(pc) {
+    if (!G.gps) return;
+    var g = pc.st.gps, t = G.p.s - pc.s0, key, arrow, dist, into, to;
+    if (pc.kind === "road" && g) {
+      if (g.left === 0) { key = "done"; arrow = "🏁"; dist = "Framme"; into = g.to; to = "Stanna vid kanten"; }
+      else {
+        var toTurn = Math.max(0, pc.len - t);
+        arrow = g.exit ? "⟳" + g.exit : ARROW[g.turn];
+        dist = toTurn > 950 ? (toTurn / 1000).toFixed(1).replace(".", ",") + " km" : Math.max(10, Math.round(toTurn / 10) * 10) + " m";
+        into = g.exit ? "Avfart " + g.exit + (g.into ? " mot " + g.into : "") : (g.turn === 0 ? "Rakt fram" : g.turn > 0 ? "Sväng höger" : "Sväng vänster") + (g.into ? " in på " + g.into : "");
+        var left = g.left != null ? g.left - t : null;
+        to = "Till " + g.to + (left != null ? " · " + (left > 950 ? (left / 1000).toFixed(1).replace(".", ",") + " km" : Math.max(10, Math.round(left / 10) * 10) + " m") : "");
+        key = arrow + dist + into + to;
+      }
+      if (key === G.gpsKey) return;
+      G.gpsKey = key;
+      gpsEl.classList.toggle("done", g.left === 0);
+      document.getElementById("gpsArrow").textContent = arrow;
+      document.getElementById("gpsArrow").style.fontSize = g.exit ? "18px" : "";
+      document.getElementById("gpsDist").textContent = dist;
+      document.getElementById("gpsInto").textContent = into;
+      document.getElementById("gpsTo").textContent = to;
+    }
+  }
   function drawHud(pc) {
     pc = pc || curPiece();
+    drawGps(pc);
     var kmh = Math.round(Math.abs(G.p.v) * KMH);
     hud.speed.textContent = kmh;
     var lim = G.limit || pc.limit;
@@ -2361,7 +2390,7 @@
 
   // ---------- screens ----------
   function show(id) {
-    ["menu", "game", "paused", "result", "place"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
+    ["menu", "game", "paused", "result", "place", "gpsPick"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
     if (id === "game") resize();
   }
   function pause() { if (!G || G.over) return; G.paused = true; document.getElementById("endRun").hidden = !G.lesson.endless; keys.gas = keys.brake = keys.left = keys.right = false; if (window.speechSynthesis) speechSynthesis.cancel(); siren(0); show("paused"); }
@@ -2397,7 +2426,7 @@
     nb.textContent = fresh.map(function (bd) { return "Nytt märke: " + bd.icon + " " + bd.name; }).join("  ·  ");
     var v = document.getElementById("verdict");
     var km = Math.max(0, G.p.s) / 1000, mins = Math.round(G.t / 60);
-    v.textContent = endless ? (G.crashed ? "Krock efter " : "Du körde ") + (km < 1 ? Math.round(km * 1000) + " meter" : km.toFixed(1).replace(".", ",") + " km") + (mins >= 1 ? " på " + mins + " min" : "")
+    v.textContent = endless && G.gps && !G.crashed && G.finishT >= 0 ? "Framme vid " + G.gps + "! " + (km < 1 ? Math.round(km * 1000) + " meter" : km.toFixed(1).replace(".", ",") + " km") : endless ? (G.crashed ? "Krock efter " : "Du körde ") + (km < 1 ? Math.round(km * 1000) + " meter" : km.toFixed(1).replace(".", ",") + " km") + (mins >= 1 ? " på " + mins + " min" : "")
       : G.lesson.exam ? (ok ? "Godkänd på uppkörningen!" : "Underkänd den här gången") : ok ? "Godkänd!" : "Inte godkänd än";
     v.className = "verdict " + (ok || endless && !G.crashed ? "ok" : "no");
     document.getElementById("summary").textContent = G.faults.length === 0 ? "Inga fel alls. Läraren är nöjd!" :
@@ -2562,7 +2591,57 @@
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);
   // ---------- real roads: pick a place ----------
-  var realArea = null, realIdx = -1, placeBusy = false;
+  var realArea = null, realIdx = -1, placeBusy = false, realDest = null;
+  // ---------- Eskilstuna: the map comes with the app, so the drive starts at once ----------
+  var eskArea = null, eskBusy = false;
+  function eskMsg(id, t) { document.getElementById(id).textContent = t || ""; }
+  function withEskilstuna(msgId, then) {
+    if (eskArea) return then(eskArea);
+    if (eskBusy) return;
+    eskBusy = true; eskMsg(msgId, "Laddar Eskilstuna…");
+    window.RIKTIG.loadFile("eskilstuna.json").then(function (area) {
+      eskBusy = false; eskMsg(msgId, "");
+      area.name = "Eskilstuna"; area.lat = 59.3712; area.lon = 16.5094; eskArea = area; then(area);
+    }).catch(function () { eskBusy = false; eskMsg(msgId, "Kunde inte läsa in kartan över Eskilstuna. Försök igen."); });
+  }
+  function driveEskilstuna(dest) {
+    withEskilstuna(dest ? "gpsMsg" : "eskilMsg", function (area) {
+      realArea = area; realDest = dest || null;
+      startLesson(LESSONS.findIndex(function (L) { return L.real; }));
+    });
+  }
+  document.getElementById("eskil").addEventListener("click", function () { driveEskilstuna(null); });
+  function gpsList() {
+    var q = document.getElementById("gpsQ").value.trim().toLowerCase(), box = document.getElementById("gpsList");
+    box.innerHTML = "";
+    if (!eskArea) return;
+    var all = eskArea.streetList || (eskArea.streetList = window.RIKTIG.streets(eskArea));
+    var hits = q ? all.filter(function (n) { return n.toLowerCase().indexOf(q) >= 0; }) : [];
+    hits.sort(function (a, b) { return (a.toLowerCase().indexOf(q) === 0 ? 0 : 1) - (b.toLowerCase().indexOf(q) === 0 ? 0 : 1); });
+    hits.slice(0, 8).forEach(function (n) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "📍 " + n;
+      b.addEventListener("click", function () {
+        store.gpsLast = [n].concat((store.gpsLast || []).filter(function (x) { return x !== n; })).slice(0, 4); saveStore();
+        driveEskilstuna(n);
+      });
+      box.appendChild(b);
+    });
+    eskMsg("gpsMsg", q && !hits.length ? "Hittade ingen gata med det namnet på kartan." : "");
+    if (!q && (store.gpsLast || []).length) {
+      var h = document.createElement("div"); h.className = "group"; h.textContent = "Senast"; box.appendChild(h);
+      store.gpsLast.forEach(function (n) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "📍 " + n;
+        b.addEventListener("click", function () { driveEskilstuna(n); });
+        box.appendChild(b);
+      });
+    }
+  }
+  document.getElementById("eskilGps").addEventListener("click", function () {
+    show("gpsPick"); document.getElementById("gpsQ").value = ""; gpsList();
+    withEskilstuna("gpsMsg", function () { gpsList(); document.getElementById("gpsQ").focus(); });
+  });
+  document.getElementById("gpsQ").addEventListener("input", gpsList);
+  document.getElementById("gpsBack").addEventListener("click", function () { buildMenu(); show("menu"); });
   function placeMsg(t) { document.getElementById("placeMsg").textContent = t || ""; }
   function placeButtons(list, title) {
     var box = document.getElementById("placeList"); box.innerHTML = "";
@@ -2574,7 +2653,7 @@
     });
   }
   function openPlace(i) {
-    realIdx = i; placeMsg("");
+    realIdx = i; realDest = null; placeMsg("");
     placeButtons(store.places || [], "Senast");
     show("place");
   }
@@ -2724,7 +2803,7 @@
     { id: "oandlig", icon: "♾️", name: "Oändlig körning", what: "Kör så länge du vill. Nya vägar, korsningar och hus byggs hela tiden. Avsluta i pausen.", endless: true,
       make: function () { return makeEndless(); }, steps: [] },
     { id: "riktig", icon: "🗺️", name: "Riktiga vägar", what: "Kör på riktiga gator där du vill. Välj en plats, så hämtas vägar och hus från kartan.", endless: true, real: true,
-      make: function () { return window.RIKTIG.steps(realArea, { jh: JH, rbArm: RB.arm }); }, steps: [] },
+      make: function () { return window.RIKTIG.steps(realArea, { jh: JH, rbArm: RB.arm, dest: realDest }); }, steps: [] },
     { id: "stad", icon: "🏙️", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 120, signs: [{ s: 8, speed: 50 }],

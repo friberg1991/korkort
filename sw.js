@@ -1,6 +1,6 @@
 // Keeps every file of the app on the phone, so it works without internet.
 // build.ps1 fills in the version and the file list.
-var VERSION = "korkort-20261109b";
+var VERSION = "korkort-20261109c";
 var FILES = [
   "./",
   "app.js",
@@ -11,6 +11,7 @@ var FILES = [
   "index.html",
   "manifest.webmanifest",
   "riktig.js",
+  "eskilstuna.json",
   "signs/A1.png",
   "signs/A10.png",
   "signs/A11.png",
