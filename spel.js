@@ -237,7 +237,9 @@
     for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) (A.grid[gx + "," + gy] || []).forEach(function (h) { if (all || !h.hide) out.push(h); });
     return out;
   }
-  function mapRoadWidth(e) { return e.rank >= 4 ? 9 : e.rank === 3 ? 7.5 : e.rank === 0 ? 5 : 6.5; }
+  function mapRoadWidth(e) { return e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : 5.6; }
+  // Pavement only along bigger streets; small residential streets have a narrow gravel edge.
+  function mapWalk(e) { return e.rank >= 2 ? 5.2 : 1.2; }
   // Whether point q is inside house h, or closer to its walls than m.
   function nearHouse(h, q, m) {
     var P = h.pts, n = P.length, inside = false, i, j;
@@ -254,17 +256,62 @@
   function hideMapHouses(A, pts) {
     pts.forEach(function (q) {
       mapHousesNear(A, q.x, q.y, 8).forEach(function (h) { if (nearHouse(h, q, 6.5)) { h.hide = true; A.hideVer = (A.hideVer || 0) + 1; } });
+      mapTreesNear(A, q.x, q.y, 8).forEach(function (t) { if (Math.hypot(t.x - q.x, t.y - q.y) < t.r + 5) t.hide = true; });
     });
+  }
+  // Street segments by 60 m square, for asking quickly whether a spot is on a street.
+  function segGrid(A) {
+    if (A.segs) return A.segs;
+    var g = A.segs = {};
+    A.edges.forEach(function (e) {
+      var w = mapRoadWidth(e) / 2 + mapWalk(e) / 2;
+      for (var i = 1; i < e.pts.length; i++) {
+        var a = e.pts[i - 1], b = e.pts[i], sg = { a: a, b: b, w: w };
+        var x0 = Math.floor((Math.min(a.x, b.x) - 10) / 60), x1 = Math.floor((Math.max(a.x, b.x) + 10) / 60);
+        var y0 = Math.floor((Math.min(a.y, b.y) - 10) / 60), y1 = Math.floor((Math.max(a.y, b.y) + 10) / 60);
+        for (var gx = x0; gx <= x1; gx++) for (var gy = y0; gy <= y1; gy++) (g[gx + "," + gy] = g[gx + "," + gy] || []).push(sg);
+      }
+    });
+    return g;
+  }
+  function onStreet(A, x, y, m) {
+    return (segGrid(A)[Math.floor(x / 60) + "," + Math.floor(y / 60)] || []).some(function (s) {
+      var dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, l2 = dx * dx + dy * dy || 1e-6, f = clamp(((x - s.a.x) * dx + (y - s.a.y) * dy) / l2, 0, 1);
+      return Math.hypot(s.a.x + dx * f - x, s.a.y + dy * f - y) < s.w + m;
+    });
+  }
+  function cellTrees(A, k) {
+    var T = A.trees || (A.trees = {});
+    if (T[k]) return T[k];
+    var out = T[k] = [];
+    (A.grid[k] || []).forEach(function (h) {
+      var r = rng(h.id % 100000 + 7), n = r() < 0.25 ? 0 : r() < 0.6 ? 1 : 2, rad = 0;
+      h.pts.forEach(function (q) { rad = Math.max(rad, Math.hypot(q.x - h.cx, q.y - h.cy)); });
+      if (rad > 25) return;   // big buildings: no garden
+      for (var i = 0; i < n; i++) {
+        var ang = r() * Math.PI * 2, d = rad + 3 + r() * 7, t = { x: h.cx + Math.cos(ang) * d, y: h.cy + Math.sin(ang) * d, r: 1.6 + r() * 1.6, id: h.id * 3 + i };
+        if (onStreet(A, t.x, t.y, t.r + 0.5)) continue;
+        if (mapHousesNear(A, t.x, t.y, 20, true).some(function (o) { return nearHouse(o, t, t.r * 0.7); })) continue;
+        out.push(t);
+      }
+    });
+    return out;
+  }
+  function mapTreesNear(A, x, y, r) {
+    var out = [];
+    for (var gx = Math.floor((x - r) / 60); gx <= Math.floor((x + r) / 60); gx++)
+      for (var gy = Math.floor((y - r) / 60); gy <= Math.floor((y + r) / 60); gy++) cellTrees(A, gx + "," + gy).forEach(function (t) { out.push(t); });
+    return out;
   }
   function drawMap(x, y, r) {
     var A = mapArea();
     if (!A) return;
     var es = mapEdgesNear(A, x, y, r);
     ctx.lineCap = "round"; ctx.lineJoin = "round";
-    [[COL.walk, 5.2], [COL.asph, 0]].forEach(function (pass) {
+    [[COL.walk, 1], [COL.asph, 0]].forEach(function (pass) {
       ctx.strokeStyle = pass[0];
       es.forEach(function (e) {
-        ctx.lineWidth = mapRoadWidth(e) + pass[1]; ctx.beginPath();
+        ctx.lineWidth = mapRoadWidth(e) + pass[1] * mapWalk(e); ctx.beginPath();
         e.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
         ctx.stroke();
       });
@@ -281,6 +328,10 @@
       path(h, 0, 0, 1); ctx.fillStyle = COL.houses[h.id % COL.houses.length]; ctx.fill();
       path(h, 0, 0, 0.86); ctx.fillStyle = roof; ctx.fill();
       path(h, -0.25, -0.25, 0.5); ctx.fillStyle = "rgba(255,255,255,0.10)"; ctx.fill();
+    });
+    mapTreesNear(A, x, y, r).forEach(function (t) {
+      if (t.hide) return;
+      disc("rgba(0,0,0,0.18)", t.x + 0.5, t.y + 0.7, t.r); disc(COL.tree, t.x, t.y, t.r); disc(COL.treeLight, t.x - t.r * 0.25, t.y - t.r * 0.25, t.r * 0.55);
     });
   }
   // Houses from the map, and trees where there is room.
@@ -535,7 +586,7 @@
     document.getElementById("rv").hidden = !L.reverse;
     document.getElementById("osm").hidden = !L.real;
     G.gps = L.real ? realDest : null; G.gpsKey = null;
-    document.getElementById("mini").hidden = !L.real;
+    document.getElementById("mini").hidden = !L.real; miniSize();
     gameEl.classList.toggle("withMini", !!L.real);
     if (L.real && realArea && realArea.grid) { Object.keys(realArea.grid).forEach(function (k) { realArea.grid[k].forEach(function (h) { h.hide = false; }); }); realArea.hideVer = 0; }
     document.getElementById("gps").hidden = !G.gps;
@@ -1936,12 +1987,14 @@
   }
   function drawRoadGround(pc) { inFrame(pc, drawRoadGroundL); }
   function drawRoadGroundL(pc) {
+    var st = pc.st;
     var L = pc.len;
     if (pc.kind === "mv") {
       pc.decor.forEach(function (d) { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); });
     } else if (pc.env === "stad") {
       var pr = pc.parking ? 2.5 : 0;
-      rect(COL.walk, 1.75 + pr, 1.75 + pr + 2.6, 0, L); rect(COL.walk, -5.25 - 2.6, -5.25, 0, L);
+      if (!st.noWalk) { rect(COL.walk, 1.75 + pr, 1.75 + pr + 2.6, 0, L); rect(COL.walk, -5.25 - 2.6, -5.25, 0, L); }
+      else { rect(COL.walk, 1.75, 2.35, 0, L); rect(COL.walk, -5.85, -5.25, 0, L); }
       pc.decor.forEach(function (d) {
         if (d.t !== "house" || d.gone) return;
         drawHouse(d.u, -d.w - d.len, d.dep, d.len, d.c, d.roof, d.u * 3 + d.w);
@@ -1970,7 +2023,7 @@
         ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(1.75, -st.dec[1]); ctx.lineTo(5.25, -st.dec[1]); ctx.lineTo(30, -st.dec[1] - 60); ctx.lineTo(24, -st.dec[1] - 62); ctx.closePath(); ctx.fill(); }
     } else {
       rect(COL.asph, -5.25, 1.75 + (pc.parking ? 2.5 : 0), 0, L);
-      if (pc.env === "stad") { rect(COL.curb, 1.75 + (pc.parking ? 2.5 : 0), 1.95 + (pc.parking ? 2.5 : 0), 0, L); rect(COL.curb, -5.45, -5.25, 0, L); }
+      if (pc.env === "stad" && !st.noWalk) { rect(COL.curb, 1.75 + (pc.parking ? 2.5 : 0), 1.95 + (pc.parking ? 2.5 : 0), 0, L); rect(COL.curb, -5.45, -5.25, 0, L); }
     }
   }
   function taper(u0, w0, w1, uEnd) { ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(4.3, -w0); ctx.lineTo(u0, -w0); ctx.lineTo(uEnd, -w1); ctx.closePath(); ctx.fill(); }
@@ -2433,8 +2486,13 @@
   // satellite button on, aerial photos are laid over it (they need internet; without, the map shows).
   var miniCv = document.getElementById("miniCv"), miniCtx = miniCv.getContext("2d"), miniT = -9, tiles = {};
   var MINI_M = 280;            // metres across the small map
-  var SAT_Z = 17, SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
-  var miniSatBtn = document.getElementById("miniSat");
+  var SAT_Z = 18, SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var miniSatBtn = document.getElementById("miniSat"), miniEl = document.getElementById("mini");
+  function miniSize() { miniEl.classList.toggle("big", !!store.miniBig); gameEl.classList.toggle("miniBig", !!store.miniBig); miniT = -9; }
+  miniEl.addEventListener("pointerdown", function (e) {
+    if (e.target === miniSatBtn) return;
+    e.preventDefault(); store.miniBig = !store.miniBig; saveStore(); miniSize();
+  });
   miniSatBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); store.miniSat = !store.miniSat; saveStore(); miniT = -9; });
   function tileImg(z, x, y) {
     var k = z + "/" + y + "/" + x, t = tiles[k];
@@ -2452,13 +2510,13 @@
     miniT = G.t;
     var size = Math.round(miniCv.clientWidth * DPR) || 300;
     if (miniCv.width !== size) { miniCv.width = miniCv.height = size; }
-    var p = G.p, sc = size / MINI_M, saved = ctx;
+    var sat0 = !!store.miniSat, span = sat0 ? (store.miniBig ? 200 : 130) : store.miniBig ? MINI_M * 1.8 : MINI_M, p = G.p, sc = size / span, saved = ctx;
     ctx = miniCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
     ctx.save();
     ctx.translate(size / 2, size * 0.6); ctx.rotate(-p.a); ctx.scale(sc, sc); ctx.translate(-p.x, -p.y);
-    drawMap(p.x, p.y, MINI_M);
+    drawMap(p.x, p.y, span);
     drawPieces();
     if (G.gps) {   // the street we are going to, in the GPS colour
       ctx.strokeStyle = "rgba(12,210,157,0.9)"; ctx.lineCap = ctx.lineJoin = "round"; ctx.lineWidth = 5;
@@ -2473,7 +2531,7 @@
       // Web Mercator tiles around the car, scaled and turned to the same view.
       var K = 111320, lat = A.lat - p.y / K, lon = A.lon + p.x / (K * Math.cos(A.lat * DEG)), n = Math.pow(2, SAT_Z);
       var fx = (lon + 180) / 360 * n, lr = lat * DEG, fy = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
-      var mpp = 156543.034 * Math.cos(lr) / n, k = mpp * sc, tx0 = Math.floor(fx), ty0 = Math.floor(fy), R = 2;
+      var mpp = 156543.034 * Math.cos(lr) / n, k = mpp * sc, tx0 = Math.floor(fx), ty0 = Math.floor(fy), R = Math.ceil(span * 0.75 / (mpp * 256)) + 1;
       ctx.save(); ctx.translate(size / 2, size * 0.6); ctx.rotate(-p.a); ctx.scale(k, k);
       for (var i = -R; i <= R; i++) for (var j = -R; j <= R; j++) {
         var im = tileImg(SAT_Z, tx0 + i, ty0 + j);
@@ -2482,7 +2540,7 @@
       ctx.restore();
     }
     // The car: an arrow pointing ahead.
-    ctx.save(); ctx.translate(size / 2, size * 0.6); var u = size / 30;
+    ctx.save(); ctx.translate(size / 2, size * 0.6); var u = size / 60 * (store.miniBig ? 1.3 : 1.6);
     ctx.fillStyle = "#e03832"; ctx.strokeStyle = "#fff"; ctx.lineWidth = u * 0.5;
     ctx.beginPath(); ctx.moveTo(0, -u * 1.8); ctx.lineTo(u * 1.2, u * 1.3); ctx.lineTo(0, u * 0.6); ctx.lineTo(-u * 1.2, u * 1.3); ctx.closePath(); ctx.stroke(); ctx.fill();
     ctx.restore();
@@ -3196,7 +3254,7 @@
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
     draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, housesNear: mapHousesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");

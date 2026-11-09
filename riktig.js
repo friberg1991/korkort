@@ -442,6 +442,8 @@
     var limit = snap(lim || (env === "stad" ? 50 : 70));
     var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
       edges: leg.hs.map(function (x) { return x.e.i; }) };
+    // A small residential street: no pavement and no centre line, as in a villa area.
+    if (main.e.rank <= 1 && env === "stad") { road.noWalk = true; road.small = true; }
     if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
     if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
     if (run.dest) {

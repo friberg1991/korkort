@@ -363,7 +363,7 @@
   // ---------- the real map: every street and house out to 500 m ----------
   // Streets are flat ribbons just under the painted ground, so they show past its edge; houses are
   // the map's own outlines raised to walls and a roof, merged into one mesh per 120 m square.
-  var MAP_R = 500, TILE = 120, mapRoads = null, mapAt = null, mapTiles = {}, mapT = -9, mapMat = null;
+  var treeParts = null, MAP_R = 500, TILE = 120, mapRoads = null, mapAt = null, mapTiles = {}, mapT = -9, mapMat = null;
   function ribbon(pos, pts, w, y) {
     for (var i = 1; i < pts.length; i++) {
       var a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
@@ -389,7 +389,7 @@
       if (drv[e.i]) return;
       if (!e.pts.some(function (q) { return Math.abs(q.x - p.x) < r && Math.abs(q.y - p.y) < r; })) return;
       var w = api.roadWidth(e);
-      ribbon(walk, e.pts, w + 5.2, -0.07); ribbon(asph, e.pts, w, -0.035);
+      ribbon(walk, e.pts, w + api.walkWidth(e), -0.07); ribbon(asph, e.pts, w, -0.035);
     });
     mapRoads = [flatMesh(walk, api.COL.walk), flatMesh(asph, api.COL.asph)];
     mapRoads.forEach(function (m) { scene.add(m); });
@@ -433,12 +433,29 @@
         });
       }
     });
+    // Garden trees: a trunk and a rough crown, put into the same mesh.
+    var tr = api.treesNear(A, tx * TILE + TILE / 2, ty * TILE + TILE / 2, TILE / 2).filter(function (t) {
+      return Math.floor(t.x / TILE) === tx && Math.floor(t.y / TILE) === ty;
+    });
+    if (!treeParts) treeParts = { crown: new T.IcosahedronGeometry(1, 0).toNonIndexed(), trunk: new T.CylinderGeometry(0.15, 0.22, 1.6, 5).toNonIndexed() };
+    var greens = [0x3f6e30, 0x4d7a35, 0x5a8a3a, 0x46733a, 0x2f5a34], brown = new T.Color(0x6b4a2f);
+    tr.forEach(function (t) {
+      if (t.hide) { hidden++; return; }
+      var gc = new T.Color(greens[t.id % greens.length]);
+      [[treeParts.trunk, 1, 1, 0.8, brown], [treeParts.crown, t.r * 0.85, t.r * 1.05, 1.4 + t.r * 0.8, gc]].forEach(function (part) {
+        var P2 = part[0].attributes.position.array, N2 = part[0].attributes.normal.array;
+        for (var i = 0; i < P2.length; i += 3) {
+          pos.push(t.x + P2[i] * part[1], P2[i + 1] * part[2] + part[3], t.y + P2[i + 2] * part[1]);
+          nrm.push(N2[i], N2[i + 1], N2[i + 2]); col.push(part[4].r, part[4].g, part[4].b);
+        }
+      });
+    });
     if (!mapMat) mapMat = keep(new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide }));
     var g = new T.BufferGeometry();
     g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setAttribute("normal", new T.Float32BufferAttribute(nrm, 3));
     g.setAttribute("color", new T.Float32BufferAttribute(col, 3));
     var m = new T.Mesh(g, mapMat); scene.add(m);
-    return { mesh: m, hidden: hidden, hs: hs };
+    return { mesh: m, hidden: hidden, hs: hs.concat(tr) };
   }
   function updateMap(api, G) {
     var A = api.mapArea(), p = G.p;

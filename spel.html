@@ -112,6 +112,10 @@ a { color: var(--accent); }
 #miniSat.on { background: rgba(12,210,157,0.85); }
 #miniCredit { position: absolute; left: 6px; bottom: 3px; font-size: 8px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 2px #000; pointer-events: none; }
 #game.withMini #gps { top: calc(244px + env(safe-area-inset-top)); width: 150px; }
+/* Tapped: the map grows (and shows more), tapped again it shrinks. */
+#mini { cursor: zoom-in; transition: width .2s, height .2s; }
+#mini.big { width: min(340px, 72vw, 52vh); height: min(340px, 72vw, 52vh); cursor: zoom-out; }
+#game.withMini.miniBig #gps { top: calc(94px + min(340px, 72vw, 52vh) + env(safe-area-inset-top)); }
 #osm { position: absolute; left: 8px; bottom: calc(3px + env(safe-area-inset-bottom)); font-size: 10px; color: rgba(255,255,255,0.75); text-shadow: 0 1px 2px #000; pointer-events: none; z-index: 4; }
 .verdict { font-size: 28px; font-weight: 800; margin: 8px 0 4px; }
 .verdict.ok { color: #7fe0a4; } .verdict.no { color: #f0a09c; }
