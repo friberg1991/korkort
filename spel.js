@@ -147,6 +147,7 @@
     var pc = basePiece(st, course, st.type === "mv" ? "mv" : "road");
     pc.len = st.len;
     if (st.bend) bendPiece(pc, st.bend);
+    else { var rel = autoBend(st, pc); if (rel) bendPiece(pc, rel); }
     pc.center = st.center || (pc.env === "stad" && st.small ? "none" : "dash");
     pc.warnEnd = next && (next.type === "junction" || next.type === "round");
     pc.solid = st.solid || [];
@@ -163,6 +164,30 @@
     return pc;
   }
 
+  // Made-up roads bend too, a new way every time: a sum of smooth waves that starts and ends
+  // pointing straight ahead (so junctions after it sit as planned) and never turns sharper than
+  // a real road of that kind would (about 120 m radius on a country road, 300 m on a motorway).
+  // The first stretch (the road also shown behind the start) and stretches built for exact
+  // manoeuvres (parking, ramps, road works, bus stops) stay straight.
+  function autoBend(st, pc) {
+    var L = st.len, env = pc.env;
+    if (!pc.course.pieces.length || !L || L < 90 || st.park || st.parking || st.acc || st.dec || st.pocket || st.works || st.bus || st.tram || st.brakeTest || st.finish) return null;
+    var R = Math.random, mv = pc.kind === "mv", stad = env === "stad";
+    if (R() < (mv ? 0.35 : stad ? 0.45 : 0.1)) return null;
+    var rMin = mv ? 300 : stad ? 90 : 120, want = mv ? 0.09 : stad ? 0.14 : 0.5;
+    var waves = [], kMax = L > 250 && !mv ? 3 : L > 150 ? 2 : 1, k;
+    for (k = 1; k <= kMax; k++) waves.push({ k: k, a: (R() * 2 - 1) * want / k });
+    var n = Math.round(L / 2) + 1, rel = [], i, maxCurve = 0;
+    for (i = 0; i < n; i++) {
+      var x = i / (n - 1), v = 0;
+      waves.forEach(function (w) { v += w.a * Math.sin(Math.PI * w.k * x); });
+      rel.push(v * Math.sin(Math.PI * x));
+    }
+    for (i = 1; i < n; i++) maxCurve = Math.max(maxCurve, Math.abs(rel[i] - rel[i - 1]) / 2);
+    var scale = maxCurve > 1 / rMin ? 1 / (rMin * maxCurve) : 1;
+    if (maxCurve * scale < 0.0006) return null;   // too slight to see: keep it straight
+    return rel.map(function (v) { return v * scale; });
+  }
   // A road with real bends: st.bend holds its heading every 2 m, from the start (riktig.js makes them).
   function bendPiece(pc, rel) {
     var DW = 2, n = rel.length, P = pc.P, xs = [P.x], ys = [P.y], as = [P.a], i;
@@ -1095,20 +1120,22 @@
       pc.started = true;
       (st.ahead || []).forEach(function (a) {
         var vtAt = a.queue ? queueFn(pc, a) : a.brakeAt ? brakeFn(pc, a) : null;
-        var car = new PathCar({ s: pc.s0 + a.s, d: a.d != null ? a.d : a.kind === "bike" ? 1.15 : a.kind === "horse" ? 1.25 : 0, v: a.v / KMH, kind: a.kind || "car", color: a.color, vtAt: vtAt, ttl: a.ttl ? pc.s0 + a.ttl : 0 });
+        var car = new PathCar({ s: pc.s0 + a.s + (a.brakeAt || a.queue ? 0 : (Math.random() * 2 - 1) * 15), d: a.d != null ? a.d : a.kind === "bike" ? 1.15 : a.kind === "horse" ? 1.25 : 0, v: a.v * (a.brakeAt || a.queue ? 1 : 0.9 + Math.random() * 0.2) / KMH, kind: a.kind || "car", color: a.color, vtAt: vtAt, ttl: a.ttl ? pc.s0 + a.ttl : 0 });
         if (a.brakeAt) car.suddenAt = pc.s0 + a.brakeAt;
         G.npcs.push(car);
       });
       (st.parked || []).forEach(function (s) {
-        G.npcs.push(new PathCar({ s: pc.s0 + s, d: 3.0, v: 0, kind: "car", parked: true }));
+        G.npcs.push(new PathCar({ s: pc.s0 + s + (Math.random() * 2 - 1) * 4, d: 3.0, v: 0, kind: "car", parked: true }));
       });
     }
     (st.oncoming || []).forEach(function (o, i) {
       var key = "on" + i;
-      if (!pc[key] && t >= o) {
+      // Each oncoming car comes a little earlier or later, and at its own speed, every run.
+      if (pc["onAt" + i] == null) pc["onAt" + i] = o + (Math.random() * 2 - 1) * 25;
+      if (!pc[key] && t >= pc["onAt" + i]) {
         pc[key] = true;
-        var s = Math.min(p.s + 230, course.endS - 4);
-        if (s - p.s > 60) G.npcs.push(new PathCar({ s: s, d: pc.kind === "mv" ? -12 : -3.5, dir: -1, v: (pc.limit - 8) / KMH }));
+        var s = Math.min(p.s + 200 + Math.random() * 60, course.endS - 4);
+        if (s - p.s > 60) G.npcs.push(new PathCar({ s: s, d: pc.kind === "mv" ? -12 : -3.5, dir: -1, v: (pc.limit - 14 + Math.random() * 12) / KMH }));
       }
     });
     (st.behind || []).forEach(function (b, i) {
@@ -1121,9 +1148,19 @@
       }
     });
     extraLife(pc, dt, t);
-    if (st.moose && !pc.mooseOn && t >= st.moose.s - 85) {
-      pc.mooseOn = true;
-      G.npcs.push(new Walker({ kind: "moose", s: pc.s0 + st.moose.s, u: 14, vu: -3.4, owner: pc, trigger: 0 }));
+    // The moose: a new place, side, pace and warning distance every run, and sometimes a calf after it.
+    if (st.moose && !pc.moose) {
+      var mr = Math.random;
+      pc.moose = { s: clamp(st.moose.s + (mr() * 2 - 1) * 0.35 * pc.len, 90, pc.len - 25), side: mr() < 0.5 ? 1 : -1,
+        v: 2.6 + mr() * 1.6, lead: 70 + mr() * 40, calf: mr() < 0.35 };
+    }
+    if (st.moose && !pc.mooseOn && t >= pc.moose.s - pc.moose.lead) {
+      pc.mooseOn = true; pc.calfT = 1.6 + Math.random() * 1.6;
+      G.npcs.push(new Walker({ kind: "moose", s: pc.s0 + pc.moose.s, u: 13.5 * pc.moose.side, vu: -pc.moose.side * pc.moose.v, owner: pc, trigger: 0 }));
+    }
+    if (pc.mooseOn && pc.moose.calf && pc.calfT > 0) {
+      pc.calfT -= dt;
+      if (pc.calfT <= 0) G.npcs.push(new Walker({ kind: "moose", s: pc.s0 + pc.moose.s + 4, u: 13.5 * pc.moose.side, vu: -pc.moose.side * pc.moose.v * 1.15, owner: pc, trigger: 0 }));
     }
     if (st.child && !pc.childOn && t >= st.child.s - 20) {
       pc.childOn = true;
@@ -1555,11 +1592,36 @@
   }
 
   // ---------- road users ----------
+  // An oncoming driver who sees you coming in their lane does what a real one would: flashes the
+  // lights and honks, brakes, and steers away to whichever side you are not on (out onto the verge
+  // if need be), then goes back into the lane once you have passed. Speed limits the reaction:
+  // the closer you are when they notice, the harder they brake.
+  function dodge(n, vt) {
+    var p = G.p, gap = n.s - p.s - n.hl - CAR.hl;
+    if (n.homeD == null) n.homeD = n.d;
+    if (gap < -4) { if (n.dodging) { n.dodging = false; n.td = n.homeD; n.blink = 0; } return vt; }
+    var close = n.v + Math.max(p.v, 0), ttc = close > 0.5 ? gap / close : 99;
+    var inLane = Math.abs(p.d - n.d) < n.hw + CAR.hw + 0.6 || Math.abs(p.d - n.td) < n.hw + CAR.hw + 0.6;
+    if (!n.dodging && inLane && gap < 140 && ttc < 4.5) {
+      n.dodging = true;
+      var mv = curPiece().kind === "mv";
+      // Their right is the verge (more negative d); go there unless that is where you are heading.
+      var right = n.homeD - 2.6, left = n.homeD + 2.6;
+      n.td = mv ? n.homeD : Math.abs(p.d - right) > Math.abs(p.d - left) ? right : left;
+      n.blink = n.td < n.homeD ? 1 : -1;
+      if (!n.honked) { n.honked = true; beep(392, 0.22, 0.05); setTimeout(function () { beep(392, 0.3, 0.05); }, 280); }
+    }
+    if (n.dodging) {
+      if (!inLane && Math.abs(n.d - n.td) < 0.3 && gap > 20) return Math.min(vt, n.v);   // out of the way: roll on carefully
+      return ttc < 2.5 || gap < 25 ? 0 : Math.min(vt, n.v * 0.6);
+    }
+    return vt;
+  }
   function updatePathCar(n, dt) {
     var p = G.p;
     if (n.parked) { if (n.s < p.s - 80) n.gone = true; return; }
     var vt = n.vtAt ? n.vtAt(n.s) : n.vt;
-    if (n.dir < 0 && p.d < -2 && n.s > p.s && n.s - p.s < 30) vt = 0;
+    if (n.dir < 0) vt = dodge(n, vt);
     if (n.dir > 0) {
       // Keep a distance to whatever is ahead in the same lane.
       var gap = Infinity, ov = 0;
@@ -1593,7 +1655,7 @@
     var acc = vt > n.v ? 2.2 : -7;
     n.v = vt > n.v ? Math.min(vt, n.v + acc * dt) : Math.max(vt, n.v + acc * dt);
     n.s += n.v * dt * n.dir;
-    if (n.td !== n.d) { var st = Math.min(Math.abs(n.td - n.d), 2.2 * dt); n.d += n.td > n.d ? st : -st; }
+    if (n.td !== n.d) { var st = Math.min(Math.abs(n.td - n.d), (n.dodging ? 4 : 2.2) * dt); n.d += n.td > n.d ? st : -st; }
 
     if (n.s > p.s + 420 || n.s < p.s - 200) { n.gone = true; if (n.kind === "amb") siren(0); }
   }
