@@ -1902,16 +1902,14 @@
         }
         continue;
       }
-      // Other motor vehicles do not crash into you (his choice): you drive through them. People, animals and trains still do.
-      if (/^(car|bus|truck|amb|police|tractor)$/.test(n.kind)) continue;
       if (overlap(me, boxOf(n, npcPose(n)))) {
         var what = { ped: "en gående", stroll: "en gående", cyclist: "en cyklist", cone: "hindret", officer: "polisen", police: "polisbilen", bike: "en cyklist", horse: "hästen", child: "ett barn", moose: "en älg", bus: "bussen", truck: "lastbilen", amb: "ambulansen", tractor: "traktorn" }[n.kind] || "en bil";
         return crash("Krock med " + what + "!");
       }
     }
   }
-  // Crashes are switched off for now (his wish, to try things out): set NO_CRASH to false to bring them back.
-  var NO_CRASH = true;
+  // Set NO_CRASH to true to switch every crash off, for trying things out (drive on pavements, through cars).
+  var NO_CRASH = false;
   function crash(text) {
     if (NO_CRASH) return;
     if (G.crashed) return;
