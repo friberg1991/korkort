@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1217">
+<meta name="color-scheme" content="dark">
+<title>Kartgranskaren</title>
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+:root { --bg: #0d1217; --panel: #151b21; --btn: #1f252b; --line: rgba(255,255,255,0.12); --accent: #0cd29d; --text: #e8e8e8; --dim: #9aa0a6; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+button, input, textarea { font: inherit; color: inherit; }
+#cv { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; cursor: grab; }
+#bar { position: fixed; left: 8px; right: 8px; top: calc(8px + env(safe-area-inset-top)); display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  padding: 6px; border-radius: 14px; background: rgba(13,18,23,0.9); border: 1px solid var(--line); }
+#bar a, #bar button { padding: 8px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--btn); text-decoration: none; color: var(--text); }
+#bar button.on { background: var(--accent); color: #06231a; border-color: var(--accent); font-weight: 650; }
+#bar label { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 14px; flex: 1; min-width: 150px; }
+#bar input[type=range] { flex: 1; accent-color: var(--accent); }
+#zoom { position: fixed; right: 10px; bottom: calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 6px; }
+#zoom button { width: 46px; height: 46px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.9); font-size: 22px; font-weight: 800; }
+#info { position: fixed; left: 10px; bottom: calc(16px + env(safe-area-inset-bottom)); max-width: calc(100% - 80px); padding: 8px 12px; border-radius: 12px; background: rgba(13,18,23,0.9); border: 1px solid var(--line); font-size: 14px; }
+#credit { position: fixed; right: 64px; bottom: calc(4px + env(safe-area-inset-bottom)); font-size: 10px; color: rgba(255,255,255,0.8); text-shadow: 0 1px 2px #000; pointer-events: none; }
+.sheet { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; max-height: 70vh; overflow-y: auto;
+  padding: 14px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+.sheet h2 { margin: 0 0 8px; font-size: 18px; }
+.sheet p { margin: 4px 0 10px; color: var(--dim); font-size: 14px; }
+.sheet textarea { width: 100%; min-height: 70px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--btn); resize: vertical; }
+.row { display: flex; gap: 8px; margin-top: 10px; }
+.row button { flex: 1; padding: 11px; border-radius: 12px; border: 1px solid var(--line); background: var(--btn); }
+.row button.primary { background: var(--accent); color: #06231a; font-weight: 700; border-color: var(--accent); }
+.pin { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+.pin .n { flex: none; width: 26px; height: 26px; border-radius: 50%; background: #e03832; display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+.pin .t { flex: 1; font-size: 14px; }
+.pin .t small { color: var(--dim); display: block; }
+.pin button { flex: none; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--btn); font-size: 13px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <a href="spel.html">◀ Spelet</a>
+  <button type="button" data-home="eskilstuna">Eskilstuna</button>
+  <button type="button" data-home="skogstorp">Skogstorp</button>
+  <label title="Spelets karta ovanpå satellitbilden">🛰️ <input id="mix" type="range" min="0" max="100" value="55"> 🗺️</label>
+  <button type="button" id="listBtn">📍 Lista (0)</button>
+</div>
+<div id="info">Dra för att flytta, nyp eller hjul för att zooma. Tryck där något ser fel ut.</div>
+<div id="zoom"><button type="button" id="zin">+</button><button type="button" id="zout">−</button></div>
+<div id="credit">Bild © Esri, Maxar · Kartdata © OpenStreetMap</div>
+
+<div id="note" class="sheet" hidden>
+  <h2>Vad är fel här?</h2>
+  <p id="noteWhere"></p>
+  <textarea id="noteText" placeholder="Till exempel: korsningen ser inte ut så här, vägen ska gå rakt"></textarea>
+  <div class="row"><button type="button" id="noteCancel">Avbryt</button><button type="button" class="primary" id="noteSave">Spara</button></div>
+</div>
+<div id="list" class="sheet" hidden>
+  <h2>Ställen att rätta</h2>
+  <p>Tryck Kopiera och klistra in texten i chatten till Claude.</p>
+  <div id="pins"></div>
+  <div class="row"><button type="button" id="listClose">Stäng</button><button type="button" class="primary" id="copy">Kopiera alla</button></div>
+  <div class="row"><button type="button" id="clearAll">Ta bort alla</button></div>
+</div>
+
+<script src="riktig.js"></script>
+<script>
+"use strict";
+(function () {
+  // Kartgranskaren: the game's own map (streets, houses, ground) over the satellite image, to find
+  // where the map is wrong. Each spot marked gets a note; the list is copied into the chat.
+  var HOMES = { eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json" }, skogstorp: { name: "Skogstorp", file: "skogstorp.json" } };
+  var COL = { grass: "#709c54", asph: "#4c5056", walk: "#c6c2b8", house: "#c9a0a0", roof: "#7d4a3a" };
+  var LAND = { forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", water: "#4f86b0", pitch: "#5da94a" };
+  var DEG = Math.PI / 180, K = 111320, SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var cv = document.getElementById("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, DPR = 1;
+  var store = {}; try { store = JSON.parse(localStorage.getItem("korkort-granska") || "{}"); } catch (e) { store = {}; }
+  store.pins = store.pins || [];
+  function save() { try { localStorage.setItem("korkort-granska", JSON.stringify(store)); } catch (e) {} }
+  var home = store.home || "skogstorp", area = null, areas = {}, view = { x: 0, y: 0, s: 2 }, tiles = {}, dirty = true;
+
+  // ---------- loading ----------
+  function open(id) {
+    home = id; store.home = id; save();
+    document.querySelectorAll("#bar [data-home]").forEach(function (b) { b.classList.toggle("on", b.dataset.home === id); });
+    if (areas[id]) { area = areas[id]; view = { x: 0, y: 0, s: 2 }; dirty = true; return; }
+    info("Laddar " + HOMES[id].name + "…");
+    window.RIKTIG.loadFile(HOMES[id].file).then(function (a) {
+      areas[id] = area = a; a.home = id;
+      a.houseList = []; Object.keys(a.grid).forEach(function (k) { a.grid[k].forEach(function (h) { a.houseList.push(h); }); });
+      view = { x: 0, y: 0, s: 2 }; dirty = true;
+      info("Dra för att flytta, nyp eller hjul för att zooma. Tryck där något ser fel ut.");
+    }).catch(function () { info("Kunde inte läsa kartan."); });
+  }
+  function info(t) { document.getElementById("info").textContent = t; }
+  function latLon(x, y) { return { lat: area.lat0 - y / K, lon: area.lon0 + x / (K * Math.cos(area.lat0 * DEG)) }; }
+  function xyOf(lat, lon) { return { x: (lon - area.lon0) * K * Math.cos(area.lat0 * DEG), y: -(lat - area.lat0) * K }; }
+
+  // ---------- drawing ----------
+  function resize() {
+    DPR = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+    cv.width = W * DPR; cv.height = H * DPR; dirty = true;
+  }
+  window.addEventListener("resize", resize);
+  function tile(z, x, y) {
+    var k = z + "/" + y + "/" + x, t = tiles[k];
+    if (!t) { t = tiles[k] = new Image(); t.onload = function () { t.ok = true; dirty = true; }; t.src = SAT + k; }
+    return t.ok ? t : null;
+  }
+  function poly(pts) { ctx.beginPath(); pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); }
+  function draw() {
+    requestAnimationFrame(draw);
+    if (!dirty) return;
+    dirty = false;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = "#222"; ctx.fillRect(0, 0, W, H);
+    if (!area) return;
+    var x0 = view.x - W / 2 / view.s, x1 = view.x + W / 2 / view.s, y0 = view.y - H / 2 / view.s, y1 = view.y + H / 2 / view.s;
+    // Satellite tiles, at a zoom that matches the scale.
+    var c = latLon(view.x, view.y), mppWant = 1 / view.s, z = Math.max(12, Math.min(19, Math.round(Math.log2(156543.034 * Math.cos(c.lat * DEG) / mppWant)))), n = Math.pow(2, z);
+    function tx(lon) { return (lon + 180) / 360 * n; }
+    function ty(lat) { var r = lat * DEG; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n; }
+    var a = latLon(x0, y0), b = latLon(x1, y1), mpp = 156543.034 * Math.cos(c.lat * DEG) / n;
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(view.s, view.s);
+    var fx = tx(c.lon), fy = ty(c.lat);
+    for (var X = Math.floor(tx(a.lon)); X <= Math.floor(tx(b.lon)); X++) for (var Y = Math.floor(ty(a.lat)); Y <= Math.floor(ty(b.lat)); Y++) {
+      var im = tile(z, X, Y);
+      if (im) ctx.drawImage(im, (X - fx) * 256 * mpp, (Y - fy) * 256 * mpp, 256 * mpp + 0.3, 256 * mpp + 0.3);
+    }
+    ctx.restore();
+    // The game's map on top, as see-through as the slider says.
+    var mix = +document.getElementById("mix").value / 100;
+    ctx.save(); ctx.globalAlpha = mix;
+    ctx.translate(W / 2, H / 2); ctx.scale(view.s, view.s); ctx.translate(-view.x, -view.y);
+    var inView = function (bb) { return bb[2] > x0 && bb[0] < x1 && bb[3] > y0 && bb[1] < y1; };
+    ["field", "park", "scrub", "forest", "water", "pitch"].forEach(function (k) {
+      (area.lands || []).forEach(function (l) { if (l.k === k && inView(l.bb)) { poly(l.pts); ctx.closePath(); ctx.fillStyle = LAND[k]; ctx.fill(); } });
+    });
+    ctx.lineCap = ctx.lineJoin = "round";
+    var es = area.edges.filter(function (e) {
+      if (!e.bb) { e.bb = [1e9, 1e9, -1e9, -1e9]; e.pts.forEach(function (q) { e.bb[0] = Math.min(e.bb[0], q.x); e.bb[1] = Math.min(e.bb[1], q.y); e.bb[2] = Math.max(e.bb[2], q.x); e.bb[3] = Math.max(e.bb[3], q.y); }); }
+      return inView(e.bb);
+    });
+    var width = function (e) { return e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : 5.6; };
+    es.forEach(function (e) { ctx.strokeStyle = COL.walk; ctx.lineWidth = width(e) + (e.rank >= 2 ? 5.2 : 1.2); poly(e.pts); ctx.stroke(); });
+    es.forEach(function (e) { ctx.strokeStyle = e.ow ? "#5a4a8a" : COL.asph; ctx.lineWidth = width(e); poly(e.pts); ctx.stroke(); });
+    area.houseList.forEach(function (h) {
+      if (h.cx < x0 - 40 || h.cx > x1 + 40 || h.cy < y0 - 40 || h.cy > y1 + 40) return;
+      poly(h.pts); ctx.closePath(); ctx.fillStyle = COL.roof; ctx.fill();
+    });
+    // Crossings and roundabouts as the map has them: white dots where streets meet.
+    if (view.s > 1.2) Object.keys(area.verts).forEach(function (k) {
+      var v = area.verts[k];
+      if (v.x < x0 || v.x > x1 || v.y < y0 || v.y > y1 || v.edges.length < 3 && !v.rb) return;
+      ctx.beginPath(); ctx.arc(v.x, v.y, (v.rb ? 5 : 2.2), 0, Math.PI * 2); ctx.fillStyle = v.rb ? "rgba(255,200,60,0.9)" : "rgba(255,255,255,0.85)"; ctx.fill();
+    });
+    ctx.restore();
+    // Street names when close enough.
+    if (view.s > 2.5) {
+      ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 3;
+      var seen = {};
+      es.forEach(function (e) {
+        var nm = e.tags.name; if (!nm || seen[nm] || e.len < 60) return; seen[nm] = 1;
+        var q = e.pts[Math.floor(e.pts.length / 2)], sx = W / 2 + (q.x - view.x) * view.s, sy = H / 2 + (q.y - view.y) * view.s;
+        ctx.strokeText(nm, sx, sy); ctx.fillText(nm, sx, sy);
+      });
+    }
+    // The pins for this place.
+    store.pins.forEach(function (p, i) {
+      if (p.home !== home) return;
+      var q = xyOf(p.lat, p.lon), sx = W / 2 + (q.x - view.x) * view.s, sy = H / 2 + (q.y - view.y) * view.s;
+      ctx.beginPath(); ctx.arc(sx, sy - 16, 11, 0, Math.PI * 2); ctx.moveTo(sx - 6, sy - 9); ctx.lineTo(sx, sy); ctx.lineTo(sx + 6, sy - 9);
+      ctx.fillStyle = "#e03832"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.font = "800 11px system-ui"; ctx.textAlign = "center"; ctx.fillText(String(i + 1), sx, sy - 12);
+    });
+  }
+
+  // ---------- moving and zooming ----------
+  var pts = {}, drag = null, moved = 0;
+  function zoomAt(f, sx, sy) {
+    var wx = view.x + (sx - W / 2) / view.s, wy = view.y + (sy - H / 2) / view.s;
+    view.s = Math.max(0.15, Math.min(12, view.s * f));
+    view.x = wx - (sx - W / 2) / view.s; view.y = wy - (sy - H / 2) / view.s; dirty = true;
+  }
+  cv.addEventListener("pointerdown", function (e) { cv.setPointerCapture(e.pointerId); pts[e.pointerId] = { x: e.clientX, y: e.clientY }; drag = { n: Object.keys(pts).length }; moved = 0; });
+  cv.addEventListener("pointermove", function (e) {
+    if (!pts[e.pointerId]) return;
+    var ids = Object.keys(pts), old = pts[e.pointerId];
+    if (ids.length === 2) {
+      var o = pts[ids[0] == e.pointerId ? ids[1] : ids[0]], d0 = Math.hypot(old.x - o.x, old.y - o.y), d1 = Math.hypot(e.clientX - o.x, e.clientY - o.y);
+      if (d0 > 0) zoomAt(d1 / d0, (e.clientX + o.x) / 2, (e.clientY + o.y) / 2);
+      moved += 10;
+    } else {
+      view.x -= (e.clientX - old.x) / view.s; view.y -= (e.clientY - old.y) / view.s; dirty = true;
+      moved += Math.abs(e.clientX - old.x) + Math.abs(e.clientY - old.y);
+    }
+    pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+  });
+  function up(e) {
+    var was = pts[e.pointerId]; delete pts[e.pointerId];
+    if (was && moved < 6 && drag && drag.n === 1 && area) askNote(e.clientX, e.clientY);
+    if (!Object.keys(pts).length) drag = null;
+  }
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", function (e) { delete pts[e.pointerId]; });
+  cv.addEventListener("wheel", function (e) { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY); }, { passive: false });
+  document.getElementById("zin").addEventListener("click", function () { zoomAt(1.5, W / 2, H / 2); });
+  document.getElementById("zout").addEventListener("click", function () { zoomAt(1 / 1.5, W / 2, H / 2); });
+  document.getElementById("mix").addEventListener("input", function () { dirty = true; });
+  document.querySelectorAll("#bar [data-home]").forEach(function (b) { b.addEventListener("click", function () { open(b.dataset.home); }); });
+
+  // ---------- notes ----------
+  var pending = null;
+  function nearestStreet(x, y) {
+    var best = null, bd = 1e9;
+    area.edges.forEach(function (e) {
+      for (var i = 1; i < e.pts.length; i++) {
+        var a = e.pts[i - 1], b = e.pts[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-6;
+        var f = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2)), d = Math.hypot(a.x + dx * f - x, a.y + dy * f - y);
+        if (d < bd) { bd = d; best = e; }
+      }
+    });
+    return best && bd < 60 ? (best.tags.name || (best.tags.ref ? "Väg " + best.tags.ref : "")) : "";
+  }
+  function askNote(sx, sy) {
+    var x = view.x + (sx - W / 2) / view.s, y = view.y + (sy - H / 2) / view.s, ll = latLon(x, y), st = nearestStreet(x, y);
+    pending = { home: home, lat: Math.round(ll.lat * 1e5) / 1e5, lon: Math.round(ll.lon * 1e5) / 1e5, street: st };
+    document.getElementById("noteWhere").textContent = HOMES[home].name + (st ? ", vid " + st : "");
+    document.getElementById("noteText").value = "";
+    document.getElementById("list").hidden = true; document.getElementById("note").hidden = false;
+    setTimeout(function () { document.getElementById("noteText").focus(); }, 50);
+  }
+  document.getElementById("noteCancel").addEventListener("click", function () { document.getElementById("note").hidden = true; pending = null; });
+  document.getElementById("noteSave").addEventListener("click", function () {
+    if (!pending) return;
+    pending.text = document.getElementById("noteText").value.trim() || "Något ser fel ut här";
+    store.pins.push(pending); pending = null; save();
+    document.getElementById("note").hidden = true; listCount(); dirty = true;
+  });
+  function listCount() { document.getElementById("listBtn").textContent = "📍 Lista (" + store.pins.length + ")"; }
+  function pinText(p, i) { return (i + 1) + ". " + HOMES[p.home].name + (p.street ? ", " + p.street : "") + " (" + p.lat + ", " + p.lon + "): " + p.text; }
+  function showList() {
+    var box = document.getElementById("pins"); box.innerHTML = "";
+    if (!store.pins.length) box.textContent = "Inga ställen än. Tryck på kartan där något ser fel ut.";
+    store.pins.forEach(function (p, i) {
+      var row = document.createElement("div"); row.className = "pin";
+      row.innerHTML = '<span class="n"></span><span class="t"></span><button type="button">Visa</button><button type="button">✕</button>';
+      row.querySelector(".n").textContent = i + 1;
+      row.querySelector(".t").textContent = p.text; var sm = document.createElement("small"); sm.textContent = HOMES[p.home].name + (p.street ? ", " + p.street : ""); row.querySelector(".t").appendChild(sm);
+      var bs = row.querySelectorAll("button");
+      bs[0].addEventListener("click", function () {
+        var go = function () { var q = xyOf(p.lat, p.lon); view = { x: q.x, y: q.y, s: 4 }; dirty = true; document.getElementById("list").hidden = true; };
+        if (p.home !== home) { open(p.home); var t = setInterval(function () { if (area && area.home === p.home) { clearInterval(t); go(); } }, 100); } else go();
+      });
+      bs[1].addEventListener("click", function () { store.pins.splice(i, 1); save(); listCount(); showList(); dirty = true; });
+      box.appendChild(row);
+    });
+    document.getElementById("note").hidden = true; document.getElementById("list").hidden = false;
+  }
+  document.getElementById("listBtn").addEventListener("click", showList);
+  document.getElementById("listClose").addEventListener("click", function () { document.getElementById("list").hidden = true; });
+  document.getElementById("copy").addEventListener("click", function () {
+    var text = "Ställen att rätta i körkortsspelets karta:\n" + store.pins.map(pinText).join("\n");
+    var done = function () { document.getElementById("copy").textContent = "Kopierat!"; setTimeout(function () { document.getElementById("copy").textContent = "Kopiera alla"; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () { prompt("Kopiera texten:", text); });
+    else prompt("Kopiera texten:", text);
+  });
+  document.getElementById("clearAll").addEventListener("click", function () { if (confirm("Ta bort alla ställen?")) { store.pins = []; save(); listCount(); showList(); dirty = true; } });
+
+  resize(); listCount(); open(home); draw();
+})();
+</script>
+</body>
+</html>

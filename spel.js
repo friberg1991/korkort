@@ -228,8 +228,8 @@
     G.course.pieces.forEach(function (pc) { (pc.st.edges || []).forEach(function (i) { set[i] = true; }); });
     return set;
   }
-  function mapEdgesNear(A, x, y, r) {
-    var drv = mapDriven();
+  function mapEdgesNear(A, x, y, r, all) {
+    var drv = all ? {} : mapDriven();
     return A.edges.filter(function (e) { var b = edgeBox(e); return !drv[e.i] && b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; });
   }
   function mapHousesNear(A, x, y, r, all) {
@@ -255,8 +255,8 @@
   }
   function hideMapHouses(A, pts) {
     pts.forEach(function (q) {
-      mapHousesNear(A, q.x, q.y, 8).forEach(function (h) { if (nearHouse(h, q, 6.5)) { h.hide = true; A.hideVer = (A.hideVer || 0) + 1; } });
-      mapTreesNear(A, q.x, q.y, 8).forEach(function (t) { if (Math.hypot(t.x - q.x, t.y - q.y) < t.r + 5) t.hide = true; });
+      mapHousesNear(A, q.x, q.y, 8).forEach(function (h) { if (nearHouse(h, q, 4.4)) { h.hide = true; A.hideVer = (A.hideVer || 0) + 1; } });
+      mapTreesNear(A, q.x, q.y, 8).forEach(function (t) { if (Math.hypot(t.x - q.x, t.y - q.y) < t.r + 3.8) t.hide = true; });
     });
   }
   // Street segments by 60 m square, for asking quickly whether a spot is on a street.
@@ -295,7 +295,42 @@
         out.push(t);
       }
     });
+    forestTrees(A, k, out);
     return out;
+  }
+  function inPoly(P, x, y) {
+    for (var i = 0, j = P.length - 1, c = false; i < P.length; j = i++) {
+      if ((P[i].y > y) !== (P[j].y > y) && x < (P[j].x - P[i].x) * (y - P[i].y) / (P[j].y - P[i].y) + P[i].x) c = !c;
+    }
+    return c;
+  }
+  function landsNear(A, x0, y0, x1, y1) { return (A.lands || []).filter(function (l) { return l.bb[2] > x0 && l.bb[0] < x1 && l.bb[3] > y0 && l.bb[1] < y1; }); }
+  var LAND = { forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", water: "#4f86b0", pitch: "#5da94a" };
+  function drawLands(A, x, y, r) {
+    var ls = landsNear(A, x - r, y - r, x + r, y + r);
+    ["field", "park", "scrub", "forest", "water", "pitch"].forEach(function (k) {
+      ls.forEach(function (l) {
+        if (l.k !== k) return;
+        ctx.beginPath(); l.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.closePath();
+        ctx.fillStyle = LAND[k]; ctx.fill();
+        if (k === "pitch") { ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 0.35; ctx.stroke(); }
+      });
+    });
+  }
+  // Trees in forests and scrub: on a loose grid inside the area, never on a street or in a house.
+  function forestTrees(A, k, out) {
+    var xy = k.split(",").map(Number), x0 = xy[0] * 60, y0 = xy[1] * 60;
+    var ls = landsNear(A, x0, y0, x0 + 60, y0 + 60).filter(function (l) { return l.k === "forest" || l.k === "scrub"; });
+    if (!ls.length) return;
+    var r = rng(xy[0] * 7919 + xy[1] * 104729 + 3);
+    for (var gx = 0; gx < 60; gx += 10) for (var gy = 0; gy < 60; gy += 10) {
+      var t = { x: x0 + gx + r() * 8, y: y0 + gy + r() * 8, r: 1.8 + r() * 1.6, sp: r() < 0.6, id: Math.floor(r() * 1e6) };
+      var l = ls.find(function (q) { return inPoly(q.pts, t.x, t.y); });
+      if (!l || (l.k === "scrub" && r() < 0.5)) continue;
+      if (onStreet(A, t.x, t.y, t.r)) continue;
+      if (mapHousesNear(A, t.x, t.y, 20, true).some(function (o) { return nearHouse(o, t, t.r * 0.6); })) continue;
+      out.push(t);
+    }
   }
   function mapTreesNear(A, x, y, r) {
     var out = [];
@@ -303,10 +338,11 @@
       for (var gy = Math.floor((y - r) / 60); gy <= Math.floor((y + r) / 60); gy++) cellTrees(A, gx + "," + gy).forEach(function (t) { out.push(t); });
     return out;
   }
-  function drawMap(x, y, r) {
+  function drawMap(x, y, r, all) {
     var A = mapArea();
     if (!A) return;
-    var es = mapEdgesNear(A, x, y, r);
+    drawLands(A, x, y, r);
+    var es = mapEdgesNear(A, x, y, r, all);
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     [[COL.walk, 1], [COL.asph, 0]].forEach(function (pass) {
       ctx.strokeStyle = pass[0];
@@ -322,7 +358,7 @@
       h.pts.forEach(function (q, i) { var px = h.cx + (q.x - h.cx) * k + dx, py = h.cy + (q.y - h.cy) * k + dy; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
       ctx.closePath();
     };
-    mapHousesNear(A, x, y, r).forEach(function (h) {
+    mapHousesNear(A, x, y, r, all).forEach(function (h) {
       var roof = COL.roofs[Math.floor(h.id / 7) % COL.roofs.length];
       path(h, 0.9, 1.1, 1); ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fill();
       path(h, 0, 0, 1); ctx.fillStyle = COL.houses[h.id % COL.houses.length]; ctx.fill();
@@ -330,8 +366,8 @@
       path(h, -0.25, -0.25, 0.5); ctx.fillStyle = "rgba(255,255,255,0.10)"; ctx.fill();
     });
     mapTreesNear(A, x, y, r).forEach(function (t) {
-      if (t.hide) return;
-      disc("rgba(0,0,0,0.18)", t.x + 0.5, t.y + 0.7, t.r); disc(COL.tree, t.x, t.y, t.r); disc(COL.treeLight, t.x - t.r * 0.25, t.y - t.r * 0.25, t.r * 0.55);
+      if (t.hide && !all) return;
+      disc("rgba(0,0,0,0.18)", t.x + 0.5, t.y + 0.7, t.r); disc(t.sp ? "#2f5a34" : COL.tree, t.x, t.y, t.r); disc(t.sp ? "#3d6e40" : COL.treeLight, t.x - t.r * 0.25, t.y - t.r * 0.25, t.r * 0.55);
     });
   }
   // Houses from the map, and trees where there is room.
@@ -2128,7 +2164,45 @@
 
   // On a real map a junction's arms stop just past it: the map draws the real streets on from there.
   function armLen(pc) { return pc.st.real ? 3 : ARM; }
+  // A real crossing drawn from the map: each real street that meets there, at its real angle and
+  // width, out a little past the crossing, joined by a small rounded middle. Pavements only where
+  // the streets have them. Returns false when the map has no such point (then the game's own shape).
+  function edgeFrom(e, v, L) {
+    var P = e.a === v ? e.pts : e.pts.slice().reverse(), out = [P[0]], d = 0;
+    for (var i = 1; i < P.length && d < L; i++) {
+      var a = P[i - 1], b = P[i], l = Math.hypot(b.x - a.x, b.y - a.y);
+      if (d + l > L) { var f = (L - d) / l; out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }); break; }
+      out.push(b); d += l;
+    }
+    return out;
+  }
+  function drawRealCrossing(pc, pass) {
+    var A = mapArea(), v = A && pc.st.real && A.verts[pc.st.real.key];
+    if (!v) return false;
+    var line = function (pts) { ctx.beginPath(); pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.stroke(); };
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    // The streets driven in and out are the game's own roads: joined straight to the middle, so
+    // they meet it without a gap. The other streets come in at their real angles.
+    var drv = mapDriven(), ends = [], pcs = pc.course.pieces, prev = pcs[pc.index - 1], next = pcs[pc.index + 1];
+    if (prev && prev.at && prev.kind === "road") ends.push([prev.at(-1.75, prev.len - 2), prev.st.noWalk]);
+    if (next && next.at && next.kind === "road") ends.push([next.at(-1.75, 2), next.st.noWalk]);
+    v.edges.forEach(function (e) {
+      if (drv[e.i]) return;
+      var pts = edgeFrom(e, v, JH + 10);
+      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = 7 + mapWalk(e); line(pts); }
+      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = 7; line(pts); }
+    });
+    ends.forEach(function (en) {
+      var pts = [{ x: pc.C.x, y: pc.C.y }, en[0]];
+      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = 7 + (en[1] ? 1.2 : 5.2); line(pts); }
+      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = 7; line(pts); }
+    });
+    if (pass === 1) disc(COL.asph, pc.C.x, pc.C.y, HW + 0.2);
+    ctx.lineCap = "butt"; ctx.lineJoin = "miter";
+    return true;
+  }
   function drawJunction(pc, pass) {
+    if (pc.st.real && pass < 2 && drawRealCrossing(pc, pass)) return;
     var ARM = armLen(pc);
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad", verge = stad ? COL.walk : COL.grass;
@@ -2137,7 +2211,7 @@
       // On a real map: an open, rounded crossing that the map's own streets (at their real angles,
       // with their own pavements) run into, instead of a square with pavement corners.
       if (pass === 1) {
-        disc(COL.asph, 0, 0, JH + 1.2);
+        disc(COL.asph, 0, 0, HW + 2.5);
         arms.forEach(function (a) { if (a === 270) return; ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.asph, -HW, HW, -JH - ARM, -JH + 0.01); ctx.restore(); });
       }
       ctx.restore(); return;
@@ -2178,6 +2252,15 @@
 
   function drawRound(pc, pass) {
     var ARM = armLen(pc);
+    if (pc.st.real && pc.st.turn) {
+      if (pass === 1) {
+        ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
+        disc(COL.asph, 0, 0, RB.path + 2.2);
+        rect(COL.asph, -HW, HW, -RB.arm, 0);
+        ctx.restore();
+      }
+      return;
+    }
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad";
     var arms = pc.st.turn ? [270] : [270, 0, 90, 180];
@@ -2503,6 +2586,21 @@
     }
     return t.ok ? t : null;
   }
+  // One picture per 200 m square of the map, painted the first time it is needed and kept.
+  var MT = 200, MPX = 256, miniTiles = {}, miniTileN = 0;
+  function miniTile(A, tx, ty) {
+    var k = (A.name || "") + ":" + tx + "," + ty;
+    if (miniTiles[k]) return miniTiles[k];
+    if (miniTileN > 120) { miniTiles = {}; miniTileN = 0; }
+    var c = document.createElement("canvas"); c.width = c.height = MPX;
+    var saved = ctx; ctx = c.getContext("2d");
+    ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, MPX, MPX);
+    ctx.save(); ctx.scale(MPX / MT, MPX / MT); ctx.translate(-tx * MT, -ty * MT);
+    drawMap((tx + 0.5) * MT, (ty + 0.5) * MT, MT * 0.75, true);
+    ctx.restore(); ctx = saved;
+    miniTileN++;
+    return (miniTiles[k] = c);
+  }
   function drawMini() {
     var A = mapArea();
     if (!A) return;
@@ -2516,7 +2614,8 @@
     ctx.fillStyle = COL.grass; ctx.fillRect(0, 0, size, size);
     ctx.save();
     ctx.translate(size / 2, size * 0.6); ctx.rotate(-p.a); ctx.scale(sc, sc); ctx.translate(-p.x, -p.y);
-    drawMap(p.x, p.y, span);
+    var reach = span * 0.8, t0x = Math.floor((p.x - reach) / MT), t1x = Math.floor((p.x + reach) / MT), t0y = Math.floor((p.y - reach) / MT), t1y = Math.floor((p.y + reach) / MT);
+    for (var tx = t0x; tx <= t1x; tx++) for (var ty = t0y; ty <= t1y; ty++) ctx.drawImage(miniTile(A, tx, ty), tx * MT, ty * MT, MT + 0.5, MT + 0.5);
     drawPieces();
     if (G.gps) {   // the street we are going to, in the GPS colour
       ctx.strokeStyle = "rgba(12,210,157,0.9)"; ctx.lineCap = ctx.lineJoin = "round"; ctx.lineWidth = 5;

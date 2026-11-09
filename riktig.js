@@ -73,7 +73,17 @@
         el.push({ type: "way", id: x[0], tags: tags, geometry: g });
       });
       var area = makeArea({ elements: el }, m.lat, m.lon);
-      area.rRoads = m.rRoads; area.rDrive = m.rRoads - 400;
+      area.rRoads = m.rRoads; area.rDrive = m.rRoads - 400; area.lat0 = m.lat; area.lon0 = m.lon;
+      // Ground: forest, water, pitches, parks and fields, in the game's metres.
+      var K = 111320, kx = K * Math.cos(m.lat * DEG);
+      area.lands = (m.a || []).map(function (x) {
+        var pts = [], bb = [1e9, 1e9, -1e9, -1e9];
+        for (var i = 0; i < x[1].length; i += 2) {
+          var q = { x: (x[1][i + 1] - m.lon) * kx, y: -(x[1][i] - m.lat) * K };
+          pts.push(q); bb[0] = Math.min(bb[0], q.x); bb[1] = Math.min(bb[1], q.y); bb[2] = Math.max(bb[2], q.x); bb[3] = Math.max(bb[3], q.y);
+        }
+        return { k: x[0], pts: pts, bb: bb };
+      });
       return area;
     });
   }

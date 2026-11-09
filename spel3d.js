@@ -437,12 +437,14 @@
     var tr = api.treesNear(A, tx * TILE + TILE / 2, ty * TILE + TILE / 2, TILE / 2).filter(function (t) {
       return Math.floor(t.x / TILE) === tx && Math.floor(t.y / TILE) === ty;
     });
-    if (!treeParts) treeParts = { crown: new T.IcosahedronGeometry(1, 0).toNonIndexed(), trunk: new T.CylinderGeometry(0.15, 0.22, 1.6, 5).toNonIndexed() };
+    if (!treeParts) treeParts = { crown: new T.IcosahedronGeometry(1, 0).toNonIndexed(), trunk: new T.CylinderGeometry(0.15, 0.22, 1.6, 5).toNonIndexed(),
+      spruce: new T.ConeGeometry(1, 1, 6, 1, true).toNonIndexed() };
     var greens = [0x3f6e30, 0x4d7a35, 0x5a8a3a, 0x46733a, 0x2f5a34], brown = new T.Color(0x6b4a2f);
     tr.forEach(function (t) {
       if (t.hide) { hidden++; return; }
       var gc = new T.Color(greens[t.id % greens.length]);
-      [[treeParts.trunk, 1, 1, 0.8, brown], [treeParts.crown, t.r * 0.85, t.r * 1.05, 1.4 + t.r * 0.8, gc]].forEach(function (part) {
+      var parts = t.sp ? [[treeParts.spruce, t.r * 0.9, t.r * 4, t.r * 2 + 0.6, new T.Color(0x2c5532)]] : [[treeParts.trunk, 1, 1, 0.8, brown], [treeParts.crown, t.r * 0.85, t.r * 1.05, 1.4 + t.r * 0.8, gc]];
+      parts.forEach(function (part) {
         var P2 = part[0].attributes.position.array, N2 = part[0].attributes.normal.array;
         for (var i = 0; i < P2.length; i += 3) {
           pos.push(t.x + P2[i] * part[1], P2[i + 1] * part[2] + part[3], t.y + P2[i + 2] * part[1]);
@@ -553,7 +555,7 @@
       if (d.t === "house") d.obj = house(api, pc, d, (n * 0.37) % 1);
       else if (d.t === "tree") { var q = pc.at(d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
     });
-    if (pc.kind === "round") tree(pc.C.x, pc.C.y, 2.4);
+    if (pc.kind === "round" && !(pc.st.real && pc.st.turn)) tree(pc.C.x, pc.C.y, 2.4);   // a turning area has no island
     if (pc.kind === "road" || pc.kind === "mv") roadside(api, pc);
     if (pc.light) buildLights(api, pc);
   }
