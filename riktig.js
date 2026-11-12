@@ -280,7 +280,18 @@
     var kind = far ? "dead" : v.rb ? "round" : v.edges.length >= 3 ? "junction" : "dead";
     var pts = [];
     hs.forEach(function (x) { var p = hline(x).pts; (pts.length ? p.slice(1) : p).forEach(function (q) { pts.push(q); }); });
+    // At a real roundabout the road runs straight at its middle for the last stretch, so the game's ring,
+    // put straight ahead where the road ends, lands on the real one; a slip road curving in to a big ring
+    // (Årbyrondellen) put it 100 m to the side. Only the drive's line: the map still draws the real curve.
+    var v0 = from(h);
+    if (v.rb && v.rr) pts = straightTo(pts, v);
+    if (v0.rb && v0.rr) pts = straightTo(pts.slice().reverse(), v0).reverse();
     return { hs: hs, end: v, kind: kind, line: line(pts) };
+  }
+  function straightTo(pts, v) {
+    var D = Math.max(9, Math.min(120, v.rr)) + 45;   // past rbGeom's arm, so the cut is on the straight
+    for (var i = pts.length - 2; i > 0; i--) if (Math.hypot(pts[i].x - v.x, pts[i].y - v.y) >= D) break;
+    return pts.slice(0, i + 1).concat([pts[pts.length - 1]]);
   }
   function joinLegs(a, b) {
     var pts = a.line.pts.concat(b.line.pts.slice(1));
