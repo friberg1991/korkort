@@ -168,7 +168,7 @@
     if (st.type === "round") return makeRound(st, course);
     var pc = basePiece(st, course, st.type === "mv" ? "mv" : "road");
     pc.len = st.len;
-    if (st.bend) bendPiece(pc, st.bend);
+    if (st.bend) bendPiece(pc, st.bend, st.pts);
     else { var rel = autoBend(st, pc); if (rel) bendPiece(pc, rel); }
     pc.center = st.center || (pc.env === "stad" && st.small ? "none" : "dash");
     pc.warnEnd = next && (next.type === "junction" || next.type === "round");
@@ -211,11 +211,16 @@
     return rel.map(function (v) { return v * scale; });
   }
   // A road with real bends: st.bend holds its heading every 2 m, from the start (riktig.js makes them).
-  function bendPiece(pc, rel) {
+  // A real road may carry its exact points too (pts: x, y every 2 m, ending in the next junction's socket),
+  // used as they are so the road lands exactly; adding up the headings would drift a little.
+  function bendPiece(pc, rel, pts) {
     var DW = 2, n = rel.length, P = pc.P, xs = [P.x], ys = [P.y], as = [P.a], i;
+    if (pts && pts.length !== n * 2) pts = null;
     for (i = 1; i < n; i++) {
       var am = P.a + (rel[i - 1] + rel[i]) / 2;
-      xs.push(xs[i - 1] + Math.sin(am) * DW); ys.push(ys[i - 1] - Math.cos(am) * DW); as.push(P.a + rel[i]);
+      if (pts) { xs.push(pts[i * 2]); ys.push(pts[i * 2 + 1]); }
+      else { xs.push(xs[i - 1] + Math.sin(am) * DW); ys.push(ys[i - 1] - Math.cos(am) * DW); }
+      as.push(P.a + rel[i]);
     }
     pc.len = (n - 1) * DW;
     pc.poseAt = function (t) {

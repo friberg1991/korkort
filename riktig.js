@@ -484,6 +484,21 @@
   }
   // P is where the game's road starts (the way out of the junction before, always at right angles in the
   // game, so a little off the real road); null for the first road, which starts on the real one.
+  // Whether a road can join pose P to socket E: E far enough ahead, both ends turned less than 70 degrees.
+  function socketsFit(P, E) {
+    var dx = E.x - P.x, dy = E.y - P.y, d = Math.hypot(dx, dy), h = headingOf(dx, dy);
+    return d >= 4 && Math.abs(angDiff(h, P.a)) < 70 * DEG && Math.abs(angDiff(E.a, h)) < 70 * DEG;
+  }
+  // A smooth curve from pose P to pose E (a cubic Hermite spline), a point every metre.
+  function hermite(P, E) {
+    var d = Math.hypot(E.x - P.x, E.y - P.y), m = d * 0.6, n = Math.max(2, Math.ceil(d)), out = [];
+    var t0 = { x: Math.sin(P.a) * m, y: -Math.cos(P.a) * m }, t1 = { x: Math.sin(E.a) * m, y: -Math.cos(E.a) * m };
+    for (var i = 0; i <= n; i++) {
+      var s = i / n, s2 = s * s, s3 = s2 * s, h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+      out.push({ x: h00 * P.x + h10 * t0.x + h01 * E.x + h11 * t1.x, y: h00 * P.y + h10 * t0.y + h01 * E.y + h11 * t1.y });
+    }
+    return out;
+  }
   function legSteps(run, leg, startKind, offset, P) {
     var cutS = startKind === "junction" ? run.jh : startKind === "round" ? run.lastArm || run.rbArm : offset || 0;
     // A junction too close for the game's junction to fit before it is driven straight through as part
@@ -494,29 +509,53 @@
       leg = joinLegs(leg, legFrom(ch0.a.h));
     }
     var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? rbGeom(leg.end, run.rbArm).arm : run.rbArm;   // a dead end gets a turning circle
-    var Lr = leg.line.len - cutS - cutE, len, n, rel = [0], i, start = null;
-    if (Lr >= 12) {
+    var Lr = leg.line.len - cutS - cutE, len, n, rel = [0], i, start = null, exact = null;
+    // The socket the road ends in, as in Euro Truck Simulator: a junction or roundabout sits on its real
+    // place and points the real way in, and the road is bent to meet it exactly, so nothing drifts from
+    // one junction to the next. (A dead end has no real place to meet: the road ends on the real lane.)
+    var E = null;
+    if (leg.kind === "junction" || leg.kind === "round") {
+      var hin = inHeading(leg.hs[leg.hs.length - 1]), V = leg.end;
+      E = { x: V.x + 1.75 * Math.cos(hin) - cutE * Math.sin(hin), y: V.y + 1.75 * Math.sin(hin) + cutE * Math.cos(hin), a: hin };
+    }
+    if (Lr >= 12 || (E && P && socketsFit(P, E))) {
       // The real road's right lane, every metre, its heading taken across 12 m so a corner becomes a curve.
-      // The game's road starts where the game is and bends over to end where the real road ends, so a
-      // street driven twice lies in the same place both times.
-      var Q = [], R0 = null, h0 = 0, da = 0;
-      for (var w = 0; w <= Lr; w += 1) {
-        var t = cutS + w, a = pointAt(leg.line, t - 6), b = pointAt(leg.line, t + 6), q = pointAt(leg.line, t);
-        var hd = headingOf(b.x - a.x, b.y - a.y), r = { x: q.x + Math.cos(hd) * 1.75, y: q.y + Math.sin(hd) * 1.75 };
-        if (!R0) { R0 = r; h0 = hd; da = P ? angDiff(P.a, hd) : 0; start = { x: r.x, y: r.y, a: hd }; }
-        if (!P) { Q.push(r); continue; }
-        var f = Math.min(1, w / Math.min(Lr, 45)), g = 1 - f * f * (3 - 2 * f), c = Math.cos(da), sn = Math.sin(da), vx = r.x - R0.x, vy = r.y - R0.y;
-        Q.push({ x: (P.x + vx * c - vy * sn) * g + r.x * (1 - g), y: (P.y + vx * sn + vy * c) * g + r.y * (1 - g) });
+      // The game's road starts where the game is (P) and ends in the socket (E): over the first and last
+      // 45 m the real lane is turned and moved onto them, in between it is the real lane itself.
+      var Q = [], R0 = null, h0 = 0, da = 0, Lq = Math.max(Lr, 0), RE = null, dae = 0;
+      if (E && Lr > 0) {
+        var ta = pointAt(leg.line, cutS + Lr - 6), tb = pointAt(leg.line, cutS + Lr + 6), tq = pointAt(leg.line, cutS + Lr), the = headingOf(tb.x - ta.x, tb.y - ta.y);
+        RE = { x: tq.x + Math.cos(the) * 1.75, y: tq.y + Math.sin(the) * 1.75 }; dae = angDiff(E.a, the);
       }
+      for (var w = 0; w <= Lq; w += 1) {
+        var t = cutS + w, a = pointAt(leg.line, t - 6), b = pointAt(leg.line, t + 6), q = pointAt(leg.line, t);
+        var hd = headingOf(b.x - a.x, b.y - a.y), r = { x: q.x + Math.cos(hd) * 1.75, y: q.y + Math.sin(hd) * 1.75 }, o = r;
+        if (!R0) { R0 = r; h0 = hd; da = P ? angDiff(P.a, hd) : 0; start = { x: r.x, y: r.y, a: hd }; }
+        if (P) {
+          var f = Math.min(1, w / Math.max(1, Math.min(Lq, 45))), g = 1 - f * f * (3 - 2 * f), c = Math.cos(da), sn = Math.sin(da), vx = r.x - R0.x, vy = r.y - R0.y;
+          o = { x: (P.x + vx * c - vy * sn) * g + r.x * (1 - g), y: (P.y + vx * sn + vy * c) * g + r.y * (1 - g) };
+        }
+        if (RE) {
+          var fe = Math.min(1, Math.max(0, (w - Lq + Math.min(Lq, 45)) / Math.max(1, Math.min(Lq, 45)))), ge = fe * fe * (3 - 2 * fe);
+          var ce = Math.cos(dae), se = Math.sin(dae), ux = r.x - RE.x, uy = r.y - RE.y;
+          o = { x: o.x * (1 - ge) + (E.x + ux * ce - uy * se) * ge, y: o.y * (1 - ge) + (E.y + ux * se + uy * ce) * ge };
+        }
+        Q.push(o);
+      }
+      if (E && P && !RE) Q = hermite(P, E);   // the real road is all inside the junctions: a plain curve between them
+      else if (E) { Q[0] = P ? { x: P.x, y: P.y } : Q[0]; Q[Q.length - 1] = { x: E.x, y: E.y }; }
       var QL = line(Q);
       n = Math.max(2, Math.round(QL.len / DW) + 1); len = (n - 1) * DW;
       var k = QL.len / len, prev = P ? P.a : h0;
+      exact = [];
+      for (i = 0; i < n; i++) { var Pi = pointAt(QL, i * DW * k); exact.push(r1(Pi.x * 10) / 10, r1(Pi.y * 10) / 10); }
       for (i = 1; i < n; i++) {
         var A = pointAt(QL, (i - 1) * DW * k), B = pointAt(QL, Math.min(QL.len, (i + 1) * DW * k));
-        var hh = headingOf(B.x - A.x, B.y - A.y);
+        var hh = E && i === n - 1 ? E.a : headingOf(B.x - A.x, B.y - A.y);
         rel.push(Math.round((rel[i - 1] + angDiff(hh, prev)) * 1e4) / 1e4);
         prev = hh;
       }
+      if (!start) start = { x: Q[0].x, y: Q[0].y, a: P ? P.a : h0 };
     } else {
       len = 12; n = len / DW + 1;
       for (i = 1; i < n; i++) rel.push(0);
@@ -528,7 +567,7 @@
     var dens = houses.length / Math.max(len, 60) * 100;
     var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
     var limit = snap(lim || (env === "stad" ? 50 : 70));
-    var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
+    var road = { type: "road", len: len, bend: rel, pts: exact, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
       edges: leg.hs.map(function (x) { return x.e.i; }) };
     // A small residential street: no pavement and no centre line, as in a villa area.
     if ((main.e.rank <= 1 && env === "stad") || main.e.service) { road.noWalk = true; road.small = true; }
