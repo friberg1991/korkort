@@ -15,6 +15,36 @@
   // Looking around: the rig is the car's seat, the camera the driver's head turned by dragging the mouse.
   var rig, lookY = 0, lookP = 0, dragging = null, lookKey = 0, lookHeld = 0, NECK = 0.09, lastLook = { "-1": -99, "1": -99 };
   var mats = {}, geos = {};
+  // Hills: every material lifts its vertices by the ground's height under them, read from a height map
+  // over the real area (hU.hOn 0 elsewhere), so the painted road, houses, trees and cars all follow the
+  // hills without being placed again. hBox: the map's corner (x, z), grid step and size.
+  var hU = { hMap: { value: new T.DataTexture(new Float32Array(4), 2, 2, T.RedFormat, T.FloatType) }, hBox: { value: new T.Vector4(0, 0, 1, 2) }, hOn: { value: 0 } }, hFor = null, hgFor = null;
+  T.Material.prototype.onBeforeCompile = function (sh) {
+    sh.uniforms.hMap = hU.hMap; sh.uniforms.hBox = hU.hBox; sh.uniforms.hOn = hU.hOn;
+    sh.vertexShader = "uniform sampler2D hMap;\nuniform vec4 hBox;\nuniform float hOn;\n" + sh.vertexShader.replace("#include <project_vertex>", [
+      "vec4 mvPosition = vec4( transformed, 1.0 );",
+      "#ifdef USE_INSTANCING", "mvPosition = instanceMatrix * mvPosition;", "#endif",
+      "vec4 hW = modelMatrix * mvPosition;",
+      "if (hOn > 0.5) {",
+      "  vec2 hg = clamp((hW.xz - hBox.xy) / hBox.z, vec2(0.0), vec2(hBox.w - 1.001));",
+      "  vec2 hf = fract(hg), hc = floor(hg) + 0.5;",
+      "  float h00 = texture2D(hMap, hc / hBox.w).r, h10 = texture2D(hMap, (hc + vec2(1.0, 0.0)) / hBox.w).r;",
+      "  float h01 = texture2D(hMap, (hc + vec2(0.0, 1.0)) / hBox.w).r, h11 = texture2D(hMap, (hc + vec2(1.0, 1.0)) / hBox.w).r;",
+      "  hW.y += mix(mix(h00, h10, hf.x), mix(h01, h11, hf.x), hf.y);",
+      "}",
+      "mvPosition = viewMatrix * hW;",
+      "gl_Position = projectionMatrix * mvPosition;"].join("\n"));
+  };
+  function setHills(A) {
+    hFor = A; hgFor = A && A.hg;
+    var g = A && A.hg;
+    hU.hOn.value = g ? 1 : 0;
+    if (!g) return;
+    var tex = new T.DataTexture(g.h, g.n, g.n, T.RedFormat, T.FloatType);
+    tex.magFilter = tex.minFilter = T.NearestFilter; tex.needsUpdate = true;
+    if (hU.hMap.value) hU.hMap.value.dispose();
+    hU.hMap.value = tex; hU.hBox.value.set(g.x0, g.y0, g.step, g.n);
+  }
 
   function keep(x) { x.userData.keep = true; return x; }
   function mat(color, basic) {
@@ -46,14 +76,14 @@
     beam = new T.SpotLight(0xfff2d6, 0, 70, 0.5, 0.55, 1.1); beam.position.set(0.36, -0.8, -3.5);
     beam.target.position.set(0.36, -1.2, -25); rig.add(beam); rig.add(beam.target);
     buildSkyline();
-    grass = mesh(new T.PlaneGeometry(3000, 3000), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
+    grass = mesh(new T.PlaneGeometry(3000, 3000, 200, 200), mat(0x709c54), 0, -0.4, 0);   // well below the road: the mirrors' depth is coarse
     grass.rotation.x = -Math.PI / 2; scene.add(grass);
     groundCv = document.createElement("canvas"); groundCv.width = groundCv.height = GROUND_PX;
     gctx = groundCv.getContext("2d");
     groundTex = new T.CanvasTexture(groundCv);
     groundTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     if (T.SRGBColorSpace) groundTex.colorSpace = T.SRGBColorSpace;
-    ground = mesh(new T.PlaneGeometry(GROUND_M, GROUND_M), new T.MeshLambertMaterial({ map: groundTex }), 0, 0, 0);
+    ground = mesh(new T.PlaneGeometry(GROUND_M, GROUND_M, 95, 95), new T.MeshLambertMaterial({ map: groundTex }), 0, 0, 0);
     ground.rotation.x = -Math.PI / 2; scene.add(ground);
     buildCockpit();
     buildOwnCar();
@@ -290,7 +320,7 @@
     ownCar.visible = true; ownCar.position.set(p.x, 0, p.y); ownCar.rotation.y = -a;
     mirrors.forEach(function (m) {
       var off = m.side === 0 ? 0 : m.side * 1.08, fwd = m.side === 0 ? -0.9 : 0.5;
-      m.cam.position.set(p.x + rx * off + fx * fwd, m.side === 0 ? 1.32 : 1.05, p.y + ry * off + fy * fwd);
+      m.cam.position.set(p.x + rx * off + fx * fwd, (m.side === 0 ? 1.32 : 1.05) + (hgFor ? window.SPEL.api.hAt(p.x, p.y) : 0), p.y + ry * off + fy * fwd);
       // Door mirrors look back and a little outwards; the rear-view one straight back, slightly down.
       m.cam.rotation.set(m.side === 0 ? -0.06 : -0.05, Math.PI - a + m.side * 0.2, 0);
       ownCar.visible = m.side !== 0;
@@ -365,6 +395,13 @@
   // the map's own outlines raised to walls and a roof, merged into one mesh per 120 m square.
   var treeParts = null, MAP_R = 500, TILE = 120, mapRoads = null, mapAt = null, mapTiles = {}, mapT = -9, mapMat = null;
   function ribbon(pos, pts, w, y) {
+    // Cut into pieces of at most 6 m, so the road bends with the hills.
+    var fine = [pts[0]];
+    for (var k = 1; k < pts.length; k++) {
+      var p0 = pts[k - 1], p1 = pts[k], m = Math.ceil(Math.hypot(p1.x - p0.x, p1.y - p0.y) / 6);
+      for (var q = 1; q <= m; q++) fine.push({ x: p0.x + (p1.x - p0.x) * q / m, y: p0.y + (p1.y - p0.y) * q / m });
+    }
+    pts = fine;
     for (var i = 1; i < pts.length; i++) {
       var a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
       if (l < 0.05) continue;
@@ -1190,6 +1227,8 @@
       forest.scale.set(real ? 2.7 : 1, real ? 1.6 : 1, real ? 2.7 : 1);
       camera.far = real ? 720 : 500; camera.updateProjectionMatrix();
     }
+    var A3 = api.mapArea();
+    if (A3 !== hFor || (A3 && A3.hg) !== hgFor) setHills(A3);
     var p = G.p;
     // The ground texture follows the car, centred a little ahead.
     var fx = Math.sin(p.a), fy = -Math.cos(p.a);
@@ -1240,7 +1279,8 @@
     // The head turns about the neck, a little behind the eyes, and looks slightly down at the road.
     if (Math.abs(lookY) > 1.1) lastLook[lookY < 0 ? -1 : 1] = G.t;
     camera.rotation.set(-0.1 + lookP, -lookY, 0);
-    camera.position.set(Math.sin(lookY) * NECK, 0, NECK - Math.cos(lookY) * NECK);
+    // The cockpit is lifted by the hills like everything else; the eye goes with it.
+    camera.position.set(Math.sin(lookY) * NECK, hgFor ? api.hAt(p.x, p.y) : 0, NECK - Math.cos(lookY) * NECK);
     // Steering wheel turns with how fast the car turns.
     if (prevA === null) prevA = p.a;
     var rate = dt > 0 ? api.angDiff(p.a, prevA) / dt : 0; prevA = p.a;

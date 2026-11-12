@@ -61,7 +61,69 @@
     var ar = "(around:" + R_ROADS + "," + lat + "," + lon + ")", ah = "(around:" + R_HOUSES + "," + lat + "," + lon + ")";
     var q = '[out:json][timeout:90];way["highway"~"^(' + ROADS + ')$"]' + NOT_SERVICE + ar + ";out body qt;node(w);out body qt;" +
       'way["building"]' + ah + ";out geom qt;";
-    return overpass(q).then(function (json) { var a = makeArea(json, lat, lon); a.lat0 = lat; a.lon0 = lon; return a; });
+    // The hills come from another service at the same time and are added to the area when they come
+    // (spel.js and spel3d.js read area.hg each frame); the drive does not wait for them, and is flat
+    // without them.
+    var hp = heights(lat, lon, R_ROADS + 100).catch(function () { return null; });
+    return overpass(q).then(function (json) {
+      var a = makeArea(json, lat, lon); a.lat0 = lat; a.lon0 = lon;
+      hp.then(function (g) { if (g) a.hg = g; });
+      return a;
+    });
+  }
+
+  // ---------- hills ----------
+  // Heights on a 120 m grid around the place from Open-Meteo's elevation service (Copernicus 90 m, no
+  // key, 100 points a call, one call at a time; a call of 100 points counts as 10 against its limit of
+  // 600 a minute, so on a 429 it waits and tries again), smoothed so roofs and treetops in the data do
+  // not make bumps, and taken from the middle's height so the place itself is at 0. Kept in
+  // localStorage by place, so driving the same place again asks for nothing.
+  var H_STEP = 120;
+  function heights(lat0, lon0, R) {
+    var K = 111320, kx = K * Math.cos(lat0 * DEG), n = Math.ceil(2 * R / H_STEP) + 1, pts = [], i, j;
+    for (j = 0; j < n; j++) for (i = 0; i < n; i++) pts.push([lat0 - (-R + j * H_STEP) / K, lon0 + (-R + i * H_STEP) / kx]);
+    var out = new Float32Array(pts.length), starts = [], next = 0, key = "korkort-h:" + lat0.toFixed(4) + "," + lon0.toFixed(4) + "," + R;
+    var done = function (raw) {
+      out.set(raw);
+      for (var pass = 0; pass < 1; pass++) {
+        var src = out.slice();
+        for (j = 0; j < n; j++) for (i = 0; i < n; i++) {
+          var sum = 0, c = 0;
+          for (var dj = -1; dj <= 1; dj++) for (var di = -1; di <= 1; di++) {
+            var ii = i + di, jj = j + dj;
+            if (ii >= 0 && jj >= 0 && ii < n && jj < n) { sum += src[jj * n + ii]; c++; }
+          }
+          out[j * n + i] = sum / c;
+        }
+      }
+      var g = { x0: -R, y0: -R, step: H_STEP, n: n, h: out };
+      var mid = hAt(g, 0, 0);
+      for (i = 0; i < out.length; i++) out[i] -= mid;
+      return g;
+    };
+    try { var kept = JSON.parse(localStorage.getItem(key) || "null"); if (kept && kept.length === pts.length) return Promise.resolve(done(kept)); } catch (e) {}
+    for (i = 0; i < pts.length; i += 100) starts.push(i);
+    function one(tries) {
+      if (next >= starts.length) return Promise.resolve();
+      var b = starts[next], part = pts.slice(b, b + 100);
+      var url = "https://api.open-meteo.com/v1/elevation?latitude=" + part.map(function (q) { return q[0].toFixed(5); }).join(",") +
+        "&longitude=" + part.map(function (q) { return q[1].toFixed(5); }).join(",");
+      return fetch(url).then(function (r) {
+        if (r.status === 429 && tries < 4) return new Promise(function (ok) { setTimeout(ok, 15000); }).then(function () { return one(tries + 1); });
+        if (!r.ok) throw new Error("elevation " + r.status);
+        return r.json().then(function (js) { js.elevation.forEach(function (h, k) { out[b + k] = h; }); next++; return one(0); });
+      });
+    }
+    return one(0).then(function () {
+      try { localStorage.setItem(key, JSON.stringify(Array.prototype.map.call(out, function (h) { return Math.round(h * 10) / 10; }))); } catch (e) {}
+      return done(out.slice());
+    });
+  }
+  // The height at game metres (x, y), bilinear between the grid points, the grid's edge beyond it.
+  function hAt(g, x, y) {
+    var n = g.n, fx = Math.max(0, Math.min(n - 1.001, (x - g.x0) / g.step)), fy = Math.max(0, Math.min(n - 1.001, (y - g.y0) / g.step));
+    var i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j, h = g.h;
+    return (h[j * n + i] * (1 - u) + h[j * n + i + 1] * u) * (1 - v) + (h[(j + 1) * n + i] * (1 - u) + h[(j + 1) * n + i + 1] * u) * v;
   }
 
   // A map packed with the app (verktyg/karta.js makes it): no waiting for the map servers,
@@ -437,6 +499,28 @@
     if (!f) { var x = a; a = b; b = x; }
     return { my: Math.min(2, Math.max(1, a)), opp: Math.min(2, Math.max(1, b)) };
   }
+  // Turn lanes before a crossing (`turn:lanes`, left to right, on the way into it): for a road with two
+  // lanes my way, the ways (-1 left, 0 ahead, 1 right) each lane may go; more lanes on the map are
+  // shared out, the left half to the left lane. An unmarked lane may go every way. Null when none.
+  function turnsOf(h) {
+    var t = h.e.tags, v = h.e.ow !== 0 ? t["turn:lanes"] : t[h.f ? "turn:lanes:forward" : "turn:lanes:backward"];
+    if (!v) return null;
+    var L = v.split("|").map(function (x) {
+      var out = [];
+      x.split(";").forEach(function (w) {
+        w = w.trim();
+        if (!w || w === "none") out.push(-1, 0, 1);
+        else if (/left|reverse/.test(w) && !/merge/.test(w)) out.push(-1);
+        else if (/right/.test(w) && !/merge/.test(w)) out.push(1);
+        else out.push(0);
+      });
+      return out;
+    });
+    if (L.length < 2) return null;
+    var k = Math.floor(L.length / 2), uniq = function (a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); };
+    var res = [uniq([].concat.apply([], L.slice(0, k))), uniq([].concat.apply([], L.slice(k)))];
+    return res[0].length === 3 && res[1].length === 3 ? null : res;
+  }
   // A driven road's edges across it, the car's lane middle at 0 and the middle of the road at -1.75
   // (where junctions expect it). Two lanes my way: the second on the right at 3.5, and on a one-way
   // road on the left at -3.5 instead; oncoming lanes at -3.5 and -7.
@@ -617,7 +701,11 @@
     // A small residential street: no pavement and no centre line, as in a villa area.
     if ((main.e.rank <= 1 && env === "stad") || main.e.service) { road.noWalk = true; road.small = true; }
     // Two lanes my way: both may be driven, with lane lines between (never a small street's look).
-    if (ln.my === 2) { road.my = 2; road.opp = ln.opp; road.lanes = ln.opp ? [0, 3.5] : [0, -3.5]; road.small = false; }
+    if (ln.my === 2) {
+      road.my = 2; road.opp = ln.opp; road.lanes = ln.opp ? [0, 3.5] : [0, -3.5]; road.small = false;
+      var tl = turnsOf(leg.hs[leg.hs.length - 1]);
+      if (tl) road.turns = tl;
+    }
     if (Lr >= 12) {
       road.bridges = bridgesAlong(run, leg, cutS, Lr, len);
       if (road.bridges.length && !run.bridgeSaid) {
@@ -695,7 +783,13 @@
         if (same > 1) { var dg = ch.a.rel / DEG, side = dg > 0 ? "höger" : "vänster", ad = Math.abs(dg);
           how = ad < 15 ? "köra rakt fram" : ad < 65 ? "svänga halvt " + side : ad < 115 ? "svänga " + side : "svänga skarpt " + side; }
         // Straight past a service road's mouth is not worth a word.
-        if (!(onlyService && ch.s === 0)) road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + how + on + ". " + HINTS[utfart ? "utfart" : ctrl]]);
+        // Turn lanes: which lane to be in, when only one of the two goes that way.
+        var laneHint = "";
+        if (road.turns) {
+          var okL = road.turns[0].indexOf(ch.s) >= 0, okR = road.turns[1].indexOf(ch.s) >= 0;
+          if (okL !== okR) laneHint = " Lägg dig i " + (okL ? "vänstra" : "högra") + " körfältet, pilarna visar vägen.";
+        }
+        if (!(onlyService && ch.s === 0)) road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + how + on + "." + laneHint + " " + HINTS[utfart ? "utfart" : ctrl]]);
         if (run.dest) road.gps = { to: run.dest, left: ch.d != null ? len + ch.d : null, turn: ch.s, into: into || "" };
       }
     } else if (leg.kind === "round") {
@@ -819,5 +913,5 @@
     return best ? { name: nameOf(best.tags), d: bd } : null;
   }
 
-  window.RIKTIG = { width: widthOf, search: search, load: load, loadFile: loadFile, streets: streets, steps: steps, nearStreet: nearStreet };
+  window.RIKTIG = { heights: heights, hAt: hAt, width: widthOf, search: search, load: load, loadFile: loadFile, streets: streets, steps: steps, nearStreet: nearStreet };
 })();

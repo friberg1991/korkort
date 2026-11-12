@@ -267,8 +267,34 @@
   function mapRoadWidth(e) { return e.w || (e.w = window.RIKTIG.width(e)); }
   // A road piece's edges across it, the car's lane middle at 0: 1.75 and -5.25 on the game's own 7 m
   // roads; a real street (st.eR, st.eL from its width and lanes on the map) keeps the lanes and moves the edges.
+  // The ground's height under game metres (x, y) on a real map with hills (0 elsewhere), and the
+  // slope along the car's heading (0.08 is 8 % uphill), kept within 15 %.
+  function hAt(x, y) { var A = mapArea(); return A && A.hg ? window.RIKTIG.hAt(A.hg, x, y) : 0; }
+  function slopeAt(p) {
+    var A = mapArea();
+    if (!A || !A.hg) return 0;
+    var fx = Math.sin(p.a), fy = -Math.cos(p.a);
+    return clamp((hAt(p.x + fx * 4, p.y + fy * 4) - hAt(p.x - fx * 4, p.y - fy * 4)) / 8, -0.15, 0.15);
+  }
   function eR(pc) { return pc.st && pc.st.eR != null ? pc.st.eR : 1.75; }
   function eL(pc) { return pc.st && pc.st.eL != null ? pc.st.eL : -5.25; }
+  // The two lanes my way on a road with st.my 2, left one first: the second is on the right of the
+  // car's lane (two-way road) or on its left (one-way road).
+  function laneDs(pc) { return pc.st.opp ? [0, 3.5] : [-3.5, 0]; }
+  // A painted lane arrow at u across, w along (pointing ahead), with a head for each way it allows.
+  function laneArrow(u, w, ways) {
+    ctx.strokeStyle = COL.paint; ctx.fillStyle = COL.paint; ctx.lineWidth = 0.25; ctx.lineCap = "butt";
+    var y0 = -(w - 2.4), y1 = -(w + 0.6);
+    ctx.beginPath(); ctx.moveTo(u, y0); ctx.lineTo(u, y1); ctx.stroke();
+    var head = function (x, y, dx, dy) {
+      ctx.beginPath(); ctx.moveTo(x + dx * 0.9, y + dy * 0.9); ctx.lineTo(x - dy * 0.45, y + dx * 0.45); ctx.lineTo(x + dy * 0.45, y - dx * 0.45); ctx.closePath(); ctx.fill();
+    };
+    if (ways.indexOf(0) >= 0) { ctx.beginPath(); ctx.moveTo(u, y1); ctx.lineTo(u, y1 - 0.6); ctx.stroke(); head(u, y1 - 0.6, 0, -1); }
+    [1, -1].forEach(function (s) {
+      if (ways.indexOf(s) < 0) return;
+      ctx.beginPath(); ctx.moveTo(u, y1 + 0.3); ctx.lineTo(u + s * 0.7, y1 + 0.3); ctx.stroke(); head(u + s * 0.7, y1 + 0.3, s, 0);
+    });
+  }
   // Pavement only along bigger streets; small residential streets have a narrow gravel edge.
   function mapWalk(e) { return e.rank >= 2 ? 5.2 : 1.2; }
   // Whether point q is inside house h, or closer to its walls than m.
@@ -1015,6 +1041,9 @@
       if (keys.brake) a = -7.5 * G.grip;
       else if (keys.gas) a = (3.4 * (1 - p.v / 48) + 0.3) * (0.55 + 0.45 * G.grip);
       else a = -0.3 - p.v * 0.006;
+      // Hills: the slope pulls the car back uphill and on downhill (one standing still is held).
+      var gr = slopeAt(p);
+      if (gr && (p.v > 0.3 || keys.gas)) a -= 9.81 * gr;
       p.v = Math.max(0, p.v + a * dt);
     }
     if (G.manual) moveManual(dt);
@@ -1247,6 +1276,8 @@
           : "Ingen skuldertitt åt höger! Håll X, eller dra med musen, och titta över axeln innan du byter körfält.", false);
     }
     G.lane = lane; G.lanePiece = pc.index;
+    // Turn lanes: the lane the car is in on the last stretch before the crossing.
+    if (st.turns && t > pc.len - 35) { var tlD = laneDs(pc); pc.turnLane = p.d < (tlD[0] + tlD[1]) / 2 ? 0 : 1; }
   }
   function armOk(pc, d) { return d === 0 ? pc.arms[90] : d === 1 ? pc.arms[0] : pc.arms[180]; }
   // A real crossing's street for a way (-1, 0, 1): the instructor's when it is that way, else the one
@@ -1291,6 +1322,9 @@
     if (dir !== 0 && pc.entryBlink !== dir) fault("blink:" + pc.index, "Du glömde blinka före svängen.", false);
     else if (dir !== 0 && pc.entryBlinkS > pc.s0 - 22) fault("blink:" + pc.index, "Blinka tidigare, i god tid före svängen.", false);
     if (dir !== 0 && pc.maxV * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
+    var tlPrev = G.course.pieces[pc.index - 1];
+    if (tlPrev && tlPrev.st.turns && tlPrev.turnLane != null && tlPrev.st.turns[tlPrev.turnLane].indexOf(dir) < 0)
+      fault("turnLane:" + pc.index, "Fel körfält! Pilarna visar vart körfältet går. Lägg dig i rätt körfält i god tid före korsningen.", false);
     if (pc.st.jx && idx !== pc.st.jx.wantArm && dir === pc.want && !pc.st.free) fault("route:" + pc.index, "Fel gata. Det går två vägar åt det hållet, vi skulle ta den andra.", false);
     pc.dir = dir; pc.armIdx = pc.st.jx ? idx : null;
     pc.poly = polyG(pc.C, myPath(pc, dir, idx));
@@ -2243,6 +2277,11 @@
       }
     }
     var er = eR(pc), el = eL(pc);
+    // Turn lanes: arrows in each lane before the crossing (st.turns, the ways each lane may go).
+    if (st.turns && L > 30) {
+      var tlD = laneDs(pc);
+      [L - 16, L - 40].forEach(function (w) { if (w > 6) st.turns.forEach(function (ways, k) { laneArrow(tlD[k], w, ways); }); });
+    }
     // A second lane each way (real streets with st.my / st.opp): a lane line between the two.
     if (st.my === 2 && st.opp) dashes(1.75, 0, L, 3, land ? 9 : 3, 0.12, ph);
     if (st.opp === 2) dashes(-5.25, 0, L, 3, land ? 9 : 3, 0.12, ph);
@@ -2982,7 +3021,7 @@
     keepRight: [/körfält/], close: [/avstånd|sekund/], merge: [/accelerationsfält|påfart|motorväg/], accel: [/accelerationsfält|påfart/],
     exit: [/avfart|motorväg/], rail: [/järnväg|bom|tåg/], amb: [/utryckning/], bus: [/buss/], bike: [/cykl/], bump: [/farthinder/],
     lane: [/körfält|blink/], park: [/parker|stanna/], sign: [/vägmärke|påbud|förbud|infart/], overtake: [/omkör/], works: [/vägarbete|möt/],
-    reverse: [/backa|backning/], shoulder: [/döda vinkel|skuldertitt|backspegel|körfält/], horse: [/rid|häst/],
+    turnLane: [/körfält|körriktningspil/], reverse: [/backa|backning/], shoulder: [/döda vinkel|skuldertitt|backspegel|körfält/], horse: [/rid|häst/],
     police: [/polis/], accident: [/olycka|varningstriangel/], verge: [/vägren|varningstriangel/], glare: [/helljus|halvljus|bländ/]
   };
   function questionFor(kind, used) {
@@ -3033,7 +3072,7 @@
     bus: ["Buss vid hållplats", "special"], bump: ["Farthinder", "special"], bike: ["Cyklister", "cykel"], bikex: ["Cykelöverfart", "cykel"],
     tram: ["Spårvagn", "cykel"], park: ["Parkering", "parkering"], sign: ["Vägmärken", "skyltar"], overtake: ["Omkörningsförbud", "vagarbete"],
     works: ["Vägarbete", "vagarbete"], police: ["Polisens tecken", "polis"], camera: ["Hastighet", "polis"], accident: ["Hinder och olyckor", "polis"],
-    verge: ["Bil på vägrenen", "polis"], glare: ["Helljus", "natt"], aqua: ["Vatten på vägen", "regn"]
+    turnLane: ["Körfält i korsning", "stad"], verge: ["Bil på vägrenen", "polis"], glare: ["Helljus", "natt"], aqua: ["Vatten på vägen", "regn"]
   };
   function weakPoints() {
     var fc = store.faultCounts || {}, box = document.getElementById("weak"); box.innerHTML = "";
@@ -3715,7 +3754,7 @@
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
     draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30, pc.g)); }, turnPath: function (pc, dir) { return polyG(pc.C, myPath(pc, dir, pc.st.jx ? pickArm(pc, dir) : -1)); }, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, hAt: hAt, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30, pc.g)); }, turnPath: function (pc, dir) { return polyG(pc.C, myPath(pc, dir, pc.st.jx ? pickArm(pc, dir) : -1)); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");
