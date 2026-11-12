@@ -428,10 +428,27 @@
   // The driven road's width: two lanes always fit (the car's lane stays 1.75 m right of the middle, so
   // junctions and roundabouts join as before); a road wider than 9 m waits for real lane counts.
   function driveWidth(e) { return Math.round(Math.max(5.6, Math.min(9, widthOf(e))) * 10) / 10; }
+  // Lanes each way when driving edge e forwards (f) or backwards: from `lanes:forward`/`lanes:backward`,
+  // else half of `lanes` when it is 4 or more; a one-way road has all its lanes one way. At most 2 each.
+  function lanesOf(e, f) {
+    var t = e.tags, n = parseInt(t.lanes, 10) || 0, a = parseInt(t["lanes:forward"], 10) || 0, b = parseInt(t["lanes:backward"], 10) || 0;
+    if (e.ow !== 0) return { my: Math.min(2, Math.max(1, n)), opp: 0 };
+    if (!a && !b && n >= 4) a = b = Math.floor(n / 2);
+    if (!f) { var x = a; a = b; b = x; }
+    return { my: Math.min(2, Math.max(1, a)), opp: Math.min(2, Math.max(1, b)) };
+  }
+  // A driven road's edges across it, the car's lane middle at 0 and the middle of the road at -1.75
+  // (where junctions expect it). Two lanes my way: the second on the right at 3.5, and on a one-way
+  // road on the left at -3.5 instead; oncoming lanes at -3.5 and -7.
+  function edgesOf(ln, W) {
+    if (ln.my === 2 && ln.opp) return { r: 5.25, l: -1.75 - 3.5 * ln.opp };
+    if (ln.my === 2) return { r: 1.75, l: -5.25 };
+    return { r: W / 2 - 1.75, l: -1.75 - W / 2 };
+  }
   function nameOf(t) { return t.name || (t.ref ? "Väg " + t.ref.split(";")[0] : ""); }
   function snap(v) { return v === WALK ? WALK : Math.max(20, Math.min(110, Math.round(v / 10) * 10)); }
   // Houses along the road, in the road's own terms: w along it, u sideways from the middle of the right lane.
-  function housesAlong(run, L, cutS, len, W) {
+  function housesAlong(run, L, cutS, len, ER, EL) {
     var S = [], cand = {}, out = [];
     for (var w = 0; w <= len; w += 4) {
       var a = pointAt(L, cutS + w - 4), b = pointAt(L, cutS + w + 4), q = pointAt(L, cutS + w), hd = headingOf(b.x - a.x, b.y - a.y);
@@ -450,7 +467,7 @@
         u0 = Math.min(u0, u); u1 = Math.max(u1, u); w0 = Math.min(w0, ww); w1 = Math.max(w1, ww);
       });
       // Clear of the road and the pavement: moved out a little if need be, left out if it stands on it.
-      var cr = W / 2 - 1.75 + 3.15, cl = -1.75 - W / 2 - 2.95;   // 4.9 and -8.2 on a 7 m road
+      var cr = ER + 3.15, cl = EL - 2.95;   // 4.9 and -8.2 on a 7 m road
       if (u0 + u1 > 0) {
         if (u0 < cr) { if (cr - u0 > 6) return; u1 += cr - u0; u0 = cr; }
         u1 = Math.min(u1, u0 + 30);
@@ -590,14 +607,17 @@
       start = { x: q0.x + Math.cos(h1) * 1.75, y: q0.y + Math.sin(h1) * 1.75, a: h1 };
     }
     var main = leg.hs.reduce(function (m, x) { return x.e.len > m.e.len ? x : m; });
-    var W = driveWidth(main.e), lim = limitOf(main.e.tags), houses = Lr >= 20 ? housesAlong(run, leg.line, cutS, len, W) : [];
+    var ln = lanesOf(main.e, main.f), ED = edgesOf(ln, driveWidth(main.e));
+    var lim = limitOf(main.e.tags), houses = Lr >= 20 ? housesAlong(run, leg.line, cutS, len, ED.r, ED.l) : [];
     var dens = houses.length / Math.max(len, 60) * 100;
     var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
     var limit = snap(lim || (env === "stad" ? 50 : 70));
-    var road = { type: "road", len: len, bend: rel, pts: exact, start: start, env: env, limit: limit, real: true, w: W, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
+    var road = { type: "road", len: len, bend: rel, pts: exact, start: start, env: env, limit: limit, real: true, w: Math.round((ED.r - ED.l) * 10) / 10, eR: ED.r, eL: ED.l, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
       edges: leg.hs.map(function (x) { return x.e.i; }) };
     // A small residential street: no pavement and no centre line, as in a villa area.
     if ((main.e.rank <= 1 && env === "stad") || main.e.service) { road.noWalk = true; road.small = true; }
+    // Two lanes my way: both may be driven, with lane lines between (never a small street's look).
+    if (ln.my === 2) { road.my = 2; road.opp = ln.opp; road.lanes = ln.opp ? [0, 3.5] : [0, -3.5]; road.small = false; }
     if (Lr >= 12) {
       road.bridges = bridgesAlong(run, leg, cutS, Lr, len);
       if (road.bridges.length && !run.bridgeSaid) {

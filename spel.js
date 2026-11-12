@@ -266,9 +266,9 @@
   }
   function mapRoadWidth(e) { return e.w || (e.w = window.RIKTIG.width(e)); }
   // A road piece's edges across it, the car's lane middle at 0: 1.75 and -5.25 on the game's own 7 m
-  // roads; a real street (st.w, its width from the map) keeps the lanes and moves the edges.
-  function eR(pc) { return pc.st && pc.st.w ? pc.st.w / 2 - 1.75 : 1.75; }
-  function eL(pc) { return pc.st && pc.st.w ? -1.75 - pc.st.w / 2 : -5.25; }
+  // roads; a real street (st.eR, st.eL from its width and lanes on the map) keeps the lanes and moves the edges.
+  function eR(pc) { return pc.st && pc.st.eR != null ? pc.st.eR : 1.75; }
+  function eL(pc) { return pc.st && pc.st.eL != null ? pc.st.eL : -5.25; }
   // Pavement only along bigger streets; small residential streets have a narrow gravel edge.
   function mapWalk(e) { return e.rank >= 2 ? 5.2 : 1.2; }
   // Whether point q is inside house h, or closer to its walls than m.
@@ -1120,7 +1120,7 @@
     }
     if (lanes.indexOf(p.td) < 0 && !(p.td > 2 && curPiece().kind === "mv")) {
       // The lane we were in has ended (a passing lane, or room made for a siren).
-      if (p.td === 1.3) p.td = 0;
+      if (p.td === 1.3 || (p.td === 3.5 && curPiece().kind !== "mv")) p.td = 0;
     }
     if (G.stuck && p.d < 1) G.stuck = false;
     var moving = p.td !== p.d;
@@ -1236,7 +1236,7 @@
         return crash(pc.env === "stad" && pc.kind === "road" ? "Du körde upp på trottoaren!" : "Du körde av vägen!");
     }
     // Changing lanes: the blinker has to be on first.
-    var lane = pc.kind === "mv" ? (p.d < -1.75 ? -1 : p.d > 1.75 ? 1 : 0) : (p.d < -1.75 ? -1 : 0);
+    var lane = pc.kind === "mv" || pc.st.my === 2 ? (p.d < -1.75 ? -1 : p.d > 1.75 ? 1 : 0) : (p.d < -1.75 ? -1 : 0);
     if (G.lane != null && lane !== G.lane && G.lanePiece === pc.index) {
       var dirC = lane > G.lane ? 1 : -1;
       if (p.blink !== dirC) fault("lane:" + pc.index, "Blinka innan du byter körfält eller kör ut för att köra om.", false);
@@ -1366,7 +1366,7 @@
     }
     if (p.overT > 2) fault("speed:" + pc.index, "För fort! Här gäller " + lim + " km/h.", kmh > lim + 15);
     // Driving on the wrong side of a two-lane road.
-    if (pc.kind === "road" && p.d < -1.2) {
+    if (pc.kind === "road" && pc.st.opp !== 0 && p.d < -1.2) {
       p.leftT += dt;
       if (pc.isSolid(p.s - pc.s0) && p.d < -1.6) fault("solid:" + pc.index, "Du körde över heldragen linje!", true);
       if (p.leftT > 9) fault("keepRight:" + pc.index, "Kör tillbaka till höger sida när du har kört om.", false);
@@ -1423,7 +1423,7 @@
       if (!pc[key] && t >= pc["onAt" + i]) {
         pc[key] = true;
         var s = Math.min(p.s + 200 + Math.random() * 60, course.endS - 4);
-        if (s - p.s > 60) G.npcs.push(new PathCar({ s: s, d: pc.kind === "mv" ? -12 : -3.5, dir: -1, v: (pc.limit - 14 + Math.random() * 12) / KMH }));
+        if (s - p.s > 60) G.npcs.push(new PathCar({ s: s, d: pc.kind === "mv" ? -12 : pc.st.opp === 2 && Math.random() < 0.5 ? -7 : -3.5, dir: -1, v: (pc.limit - 14 + Math.random() * 12) / KMH }));
       }
     });
     (st.behind || []).forEach(function (b, i) {
@@ -2243,6 +2243,9 @@
       }
     }
     var er = eR(pc), el = eL(pc);
+    // A second lane each way (real streets with st.my / st.opp): a lane line between the two.
+    if (st.my === 2 && st.opp) dashes(1.75, 0, L, 3, land ? 9 : 3, 0.12, ph);
+    if (st.opp === 2) dashes(-5.25, 0, L, 3, land ? 9 : 3, 0.12, ph);
     if (land) { dashes(er - 0.15, 0, L, 1, 2, 0.1, ph); dashes(el + 0.15, 0, L, 1, 2, 0.1, ph); }
     if (st.zebra && st.zebra.bike) {
       // Cykelöverfart: a row of squares on each side of the crossing, the bike path in red.
@@ -2696,7 +2699,7 @@
     if (first && (first.kind === "road" || first.kind === "mv") && G.p.s < 140) {
       var lead = Object.create(first);
       lead.P = toG(first.P, 0, -150); lead.P.a = first.P.a; lead.len = 150; lead.s0 = first.s0 - 150;
-      lead.st = first.kind === "mv" ? { acc: 150 } : { w: first.st.w, noWalk: first.st.noWalk }; lead.parking = false; lead.solid = []; lead.warnEnd = false; lead.segs = null; lead.frames = null;
+      lead.st = first.kind === "mv" ? { acc: 150 } : { w: first.st.w, eR: first.st.eR, eL: first.st.eL, my: first.st.my, opp: first.st.opp, noWalk: first.st.noWalk }; lead.parking = false; lead.solid = []; lead.warnEnd = false; lead.segs = null; lead.frames = null;
       lead.decor = (first.decor || []).filter(function (d) { return d.w + (d.len || 0) < 130; });
       vis.unshift(lead);
     }

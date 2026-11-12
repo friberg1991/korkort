@@ -576,7 +576,7 @@
     var L = pc.len, st = pc.st, at = function (u, w) { return pc.at(u, w); };
     // Bridges: a concrete edge and a railing along both sides, in 3 m lengths that follow the bends.
     (st.bridges || []).forEach(function (b) {
-      var walk = pc.env === "stad" && !st.noWalk, pr = pc.parking ? 2.5 : 0, er = st.w ? st.w / 2 - 1.75 : 1.75, el = st.w ? -1.75 - st.w / 2 : -5.25;
+      var walk = pc.env === "stad" && !st.noWalk, pr = pc.parking ? 2.5 : 0, er = st.eR != null ? st.eR : 1.75, el = st.eL != null ? st.eL : -5.25;
       var edges = walk ? [el - 2.6 - 0.35, er + pr + 2.6 + 0.35] : [el - 0.75, er + pr + 0.75];
       edges.forEach(function (u) {
         for (var w = b[0]; w < b[1] - 0.5; w += 3) {
@@ -597,7 +597,7 @@
       return;
     }
     if (pc.env === "stad") {
-      var edge = (st.w ? st.w / 2 - 1.75 : 1.75) + (pc.parking ? 2.5 : 0) + 0.5;
+      var edge = (st.eR != null ? st.eR : 1.75) + (pc.parking ? 2.5 : 0) + 0.5;
       for (var w = 12; w < L - 8; w += 32) {
         var q = at(edge, w), lamp = new T.Group();
         lamp.add(mesh(cyl(0.06, 0.08, 6, 6), mat(0x55595e), 0, 3, 0));
