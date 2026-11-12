@@ -496,12 +496,26 @@
   }
 
   // 55 written questions (pictures and situations among them) and 10 sign questions, from every chapter.
+  // Those not yet met in a test come first (db.examSeen: key, like boxes, -> the test's number), so each
+  // test differs from the ones before; when fewer than needed are left unseen, a new round starts for
+  // that kind, still without the last test's questions.
   function startExam() {
     var written = QUESTIONS.filter(function (q) { return !q.key; }), signs = QUESTIONS.filter(function (q) { return !!q.key; });
-    var list = [];
-    function take(from, n) { for (var i = 0; i < n && from.length; i++) list.push(from.splice(Math.floor(Math.random() * from.length), 1)[0]); }
+    var list = [], seen = db.examSeen || (db.examSeen = {}), n0 = db.examN || 0;
+    db.examN = n0 + 1;
+    function draw(from, n, out) { while (from.length && out.length < n) out.push(from.splice(Math.floor(Math.random() * from.length), 1)[0]); }
+    function take(from, n) {
+      var got = [];
+      draw(from.filter(function (q) { return !seen[key(q)]; }), n, got);
+      if (got.length < n) {
+        from.forEach(function (q) { if (seen[key(q)] !== n0) delete seen[key(q)]; });
+        draw(from.filter(function (q) { return !seen[key(q)] && got.indexOf(q) < 0; }), n, got);
+      }
+      got.forEach(function (q) { seen[key(q)] = db.examN; list.push(q); });
+    }
     take(written, EXAM_COUNT - EXAM_SIGNS);
     take(signs, EXAM_SIGNS);
+    save();
     for (var i = list.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = list[i]; list[i] = list[j]; list[j] = t; }
     exam = { list: list, i: 0, right: 0, wrong: [], left: EXAM_SECONDS, pick: null, done: false, review: -1 };
     clearInterval(examTimer);
