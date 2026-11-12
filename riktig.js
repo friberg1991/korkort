@@ -358,18 +358,22 @@
   }
 
   // ---------- one leg as the game's steps ----------
+  // A gångfartsområde (OSM living_street, or maxspeed "walk" or 5) means walking pace, whatever else
+  // is tagged; the game counts it as 7 km/h, as its E9 sign does.
+  var WALK = 7;
   function limitOf(t) {
     var m = t.maxspeed || "";
+    if (t.highway === "living_street" || /walk/i.test(m)) return WALK;
     if (/urban/i.test(m)) return 50;
     if (/rural/i.test(m)) return 70;
     var n = parseInt(m, 10);
+    if (n > 0 && n <= WALK) return WALK;
     if (n > 0) return /mph/.test(m) ? Math.round(n * 1.609) : n;
-    if (t.highway === "living_street" || /walk/i.test(m)) return 20;
     return null;
   }
   // A road's name as signs show it: the street name, else the road number.
   function nameOf(t) { return t.name || (t.ref ? "Väg " + t.ref.split(";")[0] : ""); }
-  function snap(v) { return Math.max(20, Math.min(110, Math.round(v / 10) * 10)); }
+  function snap(v) { return v === WALK ? WALK : Math.max(20, Math.min(110, Math.round(v / 10) * 10)); }
   // Houses along the road, in the road's own terms: w along it, u sideways from the middle of the right lane.
   function housesAlong(run, L, cutS, len) {
     var S = [], cand = {}, out = [];
@@ -455,7 +459,14 @@
     // A small residential street: no pavement and no centre line, as in a villa area.
     if (main.e.rank <= 1 && env === "stad") { road.noWalk = true; road.small = true; }
     if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
-    if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
+    // Walking pace has its own signs: E9 where it starts, E10 where it ends (then 50 unless a sign says else).
+    if (limit === WALK && run.limit !== WALK) {
+      road.signs.push({ s: 8, code: "E9" });
+      road.say.push([4, "Gångfartsområde! Här kör du i gångfart, ungefär 7 km/h, och gående har företräde."]);
+    } else if (limit !== WALK && run.limit === WALK) {
+      road.signs.push({ s: 2, code: "E10" });
+      if (limit !== 50) road.signs.push({ s: 8, speed: limit });
+    } else if (limit !== run.limit) road.signs.push({ s: 8, speed: limit });
     if (run.dest) {
       // GPS: the street we are going to. On it, we are there.
       if (run.first) road.say.push([0, "Nu kör vi till " + run.dest + ". Följ kartan uppe till höger, så säger jag vart vi ska."]);

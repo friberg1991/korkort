@@ -1,6 +1,6 @@
 // Keeps every file of the app on the phone, so it works without internet.
-// build.ps1 fills in the version and the file list.
-var VERSION = "korkort-20261109i";
+// Change VERSION on every change, or phones keep the old files; a new file the app needs goes in FILES.
+var VERSION = "korkort-20261112a";
 var FILES = [
   "./",
   "app.js",
@@ -416,7 +416,11 @@ var FILES = [
 ];
 
 self.addEventListener("install", function (e) {
-  e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(FILES); }).then(function () {
+  // "reload" fetches each file from the server: GitHub Pages lets a browser reuse a copy for 10 minutes,
+  // and a new version filled from those would keep old files until the next one.
+  e.waitUntil(caches.open(VERSION).then(function (c) {
+    return c.addAll(FILES.map(function (f) { return new Request(f, { cache: "reload" }); }));
+  }).then(function () {
     return self.skipWaiting();
   }));
 });
