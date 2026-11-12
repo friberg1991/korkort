@@ -264,7 +264,11 @@
     for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) (A.grid[gx + "," + gy] || []).forEach(function (h) { if (all || !h.hide) out.push(h); });
     return out;
   }
-  function mapRoadWidth(e) { return e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : e.rank < 0 ? 4.2 : 5.6; }
+  function mapRoadWidth(e) { return e.w || (e.w = window.RIKTIG.width(e)); }
+  // A road piece's edges across it, the car's lane middle at 0: 1.75 and -5.25 on the game's own 7 m
+  // roads; a real street (st.w, its width from the map) keeps the lanes and moves the edges.
+  function eR(pc) { return pc.st && pc.st.w ? pc.st.w / 2 - 1.75 : 1.75; }
+  function eL(pc) { return pc.st && pc.st.w ? -1.75 - pc.st.w / 2 : -5.25; }
   // Pavement only along bigger streets; small residential streets have a narrow gravel edge.
   function mapWalk(e) { return e.rank >= 2 ? 5.2 : 1.2; }
   // Whether point q is inside house h, or closer to its walls than m.
@@ -1225,7 +1229,7 @@
         if (st.acc && t > st.acc + 40 && p.d > 2.6) { fault("accel", "Accelerationsfältet tog slut! Du måste in på motorvägen innan det tar slut.", true); return crash("Du körde av vägen där accelerationsfältet tog slut."); }
         if (p.d < -7.6) return crash("Du körde in i mitträcket!");
       } else {
-        right = 1.75 + (pc.parking ? 2.5 : 0) + (st.bus && Math.abs(t - st.bus.s) < 16 ? 3.5 : 0); left = -5.25;
+        right = eR(pc) + (pc.parking ? 2.5 : 0) + (st.bus && Math.abs(t - st.bus.s) < 16 ? 3.5 : 0); left = eL(pc);
         give = pc.env === "stad" ? 0.45 : 2.2;
       }
       if (p.d + CAR.hw > right + give || p.d - CAR.hw < left - give)
@@ -2144,8 +2148,8 @@
   function drawRoadGround(pc) { inFrame(pc, drawRoadGroundL); }
   // A bridge's deck reaches out to its railings: past the pavement where there is one.
   function bridgeEdges(pc) {
-    var walk = pc.env === "stad" && !pc.st.noWalk, pr = pc.parking ? 2.5 : 0;
-    return walk ? [-5.25 - 2.6 - 0.5, 1.75 + pr + 2.6 + 0.5] : [-5.25 - 0.9, 1.75 + pr + 0.9];
+    var walk = pc.env === "stad" && !pc.st.noWalk, pr = pc.parking ? 2.5 : 0, l = eL(pc), r = eR(pc);
+    return walk ? [l - 2.6 - 0.5, r + pr + 2.6 + 0.5] : [l - 0.9, r + pr + 0.9];
   }
   function drawRoadGroundL(pc) {
     var st = pc.st;
@@ -2157,9 +2161,9 @@
     if (pc.kind === "mv") {
       pc.decor.forEach(function (d) { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); });
     } else if (pc.env === "stad") {
-      var pr = pc.parking ? 2.5 : 0;
-      if (!st.noWalk) { rect(COL.walk, 1.75 + pr, 1.75 + pr + 2.6, 0, L); rect(COL.walk, -5.25 - 2.6, -5.25, 0, L); }
-      else { rect(COL.walk, 1.75, 2.35, 0, L); rect(COL.walk, -5.85, -5.25, 0, L); }
+      var pr = pc.parking ? 2.5 : 0, er = eR(pc), el = eL(pc);
+      if (!st.noWalk) { rect(COL.walk, er + pr, er + pr + 2.6, 0, L); rect(COL.walk, el - 2.6, el, 0, L); }
+      else { rect(COL.walk, er, er + 0.6, 0, L); rect(COL.walk, el - 0.6, el, 0, L); }
       pc.decor.forEach(function (d) {
         if (d.t !== "house" || d.gone) return;
         drawHouse(d.u, -d.w - d.len, d.dep, d.len, d.c, d.roof, d.u * 3 + d.w);
@@ -2187,8 +2191,9 @@
         // the ramp bends off to the right at the end
         ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(1.75, -st.dec[1]); ctx.lineTo(5.25, -st.dec[1]); ctx.lineTo(30, -st.dec[1] - 60); ctx.lineTo(24, -st.dec[1] - 62); ctx.closePath(); ctx.fill(); }
     } else {
-      rect(COL.asph, -5.25, 1.75 + (pc.parking ? 2.5 : 0), 0, L);
-      if (pc.env === "stad" && !st.noWalk) { rect(COL.curb, 1.75 + (pc.parking ? 2.5 : 0), 1.95 + (pc.parking ? 2.5 : 0), 0, L); rect(COL.curb, -5.45, -5.25, 0, L); }
+      var er = eR(pc) + (pc.parking ? 2.5 : 0), el = eL(pc);
+      rect(COL.asph, el, er, 0, L);
+      if (pc.env === "stad" && !st.noWalk) { rect(COL.curb, er, er + 0.2, 0, L); rect(COL.curb, el - 0.2, el, 0, L); }
     }
   }
   function taper(u0, w0, w1, uEnd) { ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(4.3, -w0); ctx.lineTo(u0, -w0); ctx.lineTo(uEnd, -w1); ctx.closePath(); ctx.fill(); }
@@ -2237,17 +2242,18 @@
         });
       }
     }
-    if (land) { dashes(1.6, 0, L, 1, 2, 0.1, ph); dashes(-5.1, 0, L, 1, 2, 0.1, ph); }
+    var er = eR(pc), el = eL(pc);
+    if (land) { dashes(er - 0.15, 0, L, 1, 2, 0.1, ph); dashes(el + 0.15, 0, L, 1, 2, 0.1, ph); }
     if (st.zebra && st.zebra.bike) {
       // Cykelöverfart: a row of squares on each side of the crossing, the bike path in red.
       var cw = st.zebra.s;
-      ctx.fillStyle = "#b45a4c"; ctx.fillRect(-5.25, -cw - 1.3, 7, 2.6);
+      ctx.fillStyle = "#b45a4c"; ctx.fillRect(el, -cw - 1.3, er - el, 2.6);
       ctx.fillStyle = COL.paint;
-      for (var cu = -5.1; cu < 1.6; cu += 1.0) { ctx.fillRect(cu, -cw - 1.75, 0.45, 0.45); ctx.fillRect(cu, -cw + 1.3, 0.45, 0.45); }
+      for (var cu = el + 0.15; cu < er - 0.15; cu += 1.0) { ctx.fillRect(cu, -cw - 1.75, 0.45, 0.45); ctx.fillRect(cu, -cw + 1.3, 0.45, 0.45); }
     } else if (st.zebra) {
       var zw = st.zebra.s;
       ctx.fillStyle = COL.paint;
-      for (var u = -5.0; u < 1.6; u += 1.0) ctx.fillRect(u, -zw - 1.5, 0.5, 3);
+      for (var u = el + 0.25; u < er - 0.15; u += 1.0) ctx.fillRect(u, -zw - 1.5, 0.5, 3);
     }
     if (st.tram) {
       var tw = st.tram.s;
@@ -2288,15 +2294,15 @@
       dashes(1.9, st.park.noStop[0], st.park.noStop[1], 1, 1, 0.12, 0, COL.yellow);
     }
     (st.bumps || []).forEach(function (bw) {
-      ctx.fillStyle = "#62666c"; ctx.fillRect(-5.25, -bw - 2, 7, 4);
+      ctx.fillStyle = "#62666c"; ctx.fillRect(el, -bw - 2, er - el, 4);
       ctx.fillStyle = COL.paint;
-      for (var u = -4.9; u < 1.5; u += 1.6) { ctx.beginPath(); ctx.moveTo(u, -bw + 1.6); ctx.lineTo(u + 0.8, -bw + 1.6); ctx.lineTo(u + 0.4, -bw - 1.6); ctx.closePath(); ctx.fill(); }
+      for (var u = el + 0.35; u < er - 0.25; u += 1.6) { ctx.beginPath(); ctx.moveTo(u, -bw + 1.6); ctx.lineTo(u + 0.8, -bw + 1.6); ctx.lineTo(u + 0.4, -bw - 1.6); ctx.closePath(); ctx.fill(); }
     });
     if (st.rail) {
       var rw = st.rail.s;
       ctx.fillStyle = "#8c8274"; ctx.fillRect(-60, -rw - 2.2, 120, 4.4);
       ctx.fillStyle = "#6e523c"; for (var x = -60; x < 60; x += 1.4) ctx.fillRect(x, -rw - 1.7, 0.5, 3.4);
-      ctx.fillStyle = COL.asph; ctx.fillRect(-5.25, -rw - 2.2, 7, 4.4);
+      ctx.fillStyle = COL.asph; ctx.fillRect(el, -rw - 2.2, er - el, 4.4);
       ctx.fillStyle = "#2e3034"; ctx.fillRect(-60, -rw - 0.85, 120, 0.2); ctx.fillRect(-60, -rw + 0.65, 120, 0.2);
       ctx.fillStyle = COL.paint; ctx.fillRect(-1.75, -rw + 6.2, 3.5, 0.4);
     }
@@ -2324,20 +2330,24 @@
     // The streets driven in and out are the game's own roads: joined straight to the middle, so
     // they meet it without a gap. The other streets come in at their real angles.
     var drv = mapDriven(), ends = [], pcs = pc.course.pieces, prev = pcs[pc.index - 1], next = pcs[pc.index + 1];
-    if (prev && prev.at && prev.kind === "road") ends.push([prev.at(-1.75, prev.len - 2), prev.st.noWalk]);
-    if (next && next.at && next.kind === "road") ends.push([next.at(-1.75, 2), next.st.noWalk]);
+    // The driven roads at their own width (st.w), so they meet the middle edge to edge.
+    if (prev && prev.at && prev.kind === "road") ends.push([prev.at(eR(prev) / 2 + eL(prev) / 2, prev.len - 2), prev.st.noWalk, eR(prev) - eL(prev)]);
+    if (next && next.at && next.kind === "road") ends.push([next.at(eR(next) / 2 + eL(next) / 2, 2), next.st.noWalk, eR(next) - eL(next)]);
+    var widest = 7;
     v.edges.forEach(function (e) {
       if (drv[e.i]) return;
-      var pts = edgeFrom(e, v, JH + 10);
-      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = 7 + mapWalk(e); line(pts); }
-      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = 7; line(pts); }
+      var pts = edgeFrom(e, v, JH + 10), w = mapRoadWidth(e);
+      widest = Math.max(widest, w);
+      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = w + mapWalk(e); line(pts); }
+      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = w; line(pts); }
     });
     ends.forEach(function (en) {
       var pts = [{ x: pc.C.x, y: pc.C.y }, en[0]];
-      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = 7 + (en[1] ? 1.2 : 5.2); line(pts); }
-      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = 7; line(pts); }
+      widest = Math.max(widest, en[2]);
+      if (pass === 0) { ctx.strokeStyle = COL.walk; ctx.lineWidth = en[2] + (en[1] ? 1.2 : 5.2); line(pts); }
+      else { ctx.strokeStyle = COL.asph; ctx.lineWidth = en[2]; line(pts); }
     });
-    if (pass === 1) disc(COL.asph, pc.C.x, pc.C.y, HW + 0.2);
+    if (pass === 1) disc(COL.asph, pc.C.x, pc.C.y, widest / 2 + 0.2);
     ctx.lineCap = "butt"; ctx.lineJoin = "miter";
     return true;
   }
@@ -2686,7 +2696,7 @@
     if (first && (first.kind === "road" || first.kind === "mv") && G.p.s < 140) {
       var lead = Object.create(first);
       lead.P = toG(first.P, 0, -150); lead.P.a = first.P.a; lead.len = 150; lead.s0 = first.s0 - 150;
-      lead.st = first.kind === "mv" ? { acc: 150 } : {}; lead.parking = false; lead.solid = []; lead.warnEnd = false; lead.segs = null; lead.frames = null;
+      lead.st = first.kind === "mv" ? { acc: 150 } : { w: first.st.w, noWalk: first.st.noWalk }; lead.parking = false; lead.solid = []; lead.warnEnd = false; lead.segs = null; lead.frames = null;
       lead.decor = (first.decor || []).filter(function (d) { return d.w + (d.len || 0) < 130; });
       vis.unshift(lead);
     }

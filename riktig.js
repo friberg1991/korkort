@@ -416,10 +416,22 @@
     return null;
   }
   // A road's name as signs show it: the street name, else the road number.
+  // A street's carriageway width in metres: the map's own `width` when it has one, else from its
+  // lanes (3.25 m each), else by the kind of road. spel.js draws the map around the drive with it too.
+  function widthOf(e) {
+    var t = e.tags, w = parseFloat(t.width), n = parseInt(t.lanes, 10);
+    if (w >= 3 && w <= 30) return w;
+    var base = e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : e.rank < 0 ? 4.2 : 5.6;
+    if (n >= 1 && n <= 8) return Math.max(n * 3.25, n === 1 ? 3.5 : base);
+    return base;
+  }
+  // The driven road's width: two lanes always fit (the car's lane stays 1.75 m right of the middle, so
+  // junctions and roundabouts join as before); a road wider than 9 m waits for real lane counts.
+  function driveWidth(e) { return Math.round(Math.max(5.6, Math.min(9, widthOf(e))) * 10) / 10; }
   function nameOf(t) { return t.name || (t.ref ? "Väg " + t.ref.split(";")[0] : ""); }
   function snap(v) { return v === WALK ? WALK : Math.max(20, Math.min(110, Math.round(v / 10) * 10)); }
   // Houses along the road, in the road's own terms: w along it, u sideways from the middle of the right lane.
-  function housesAlong(run, L, cutS, len) {
+  function housesAlong(run, L, cutS, len, W) {
     var S = [], cand = {}, out = [];
     for (var w = 0; w <= len; w += 4) {
       var a = pointAt(L, cutS + w - 4), b = pointAt(L, cutS + w + 4), q = pointAt(L, cutS + w), hd = headingOf(b.x - a.x, b.y - a.y);
@@ -438,11 +450,12 @@
         u0 = Math.min(u0, u); u1 = Math.max(u1, u); w0 = Math.min(w0, ww); w1 = Math.max(w1, ww);
       });
       // Clear of the road and the pavement: moved out a little if need be, left out if it stands on it.
+      var cr = W / 2 - 1.75 + 3.15, cl = -1.75 - W / 2 - 2.95;   // 4.9 and -8.2 on a 7 m road
       if (u0 + u1 > 0) {
-        if (u0 < 4.9) { if (4.9 - u0 > 6) return; u1 += 4.9 - u0; u0 = 4.9; }
+        if (u0 < cr) { if (cr - u0 > 6) return; u1 += cr - u0; u0 = cr; }
         u1 = Math.min(u1, u0 + 30);
       } else {
-        if (u1 > -8.2) { if (u1 + 8.2 > 6) return; u0 -= u1 + 8.2; u1 = -8.2; }
+        if (u1 > cl) { if (u1 - cl > 6) return; u0 -= u1 - cl; u1 = cl; }
         u0 = Math.max(u0, u1 - 30);
       }
       w0 = Math.max(w0, 1.5); w1 = Math.min(w1, len - 1.5);
@@ -577,11 +590,11 @@
       start = { x: q0.x + Math.cos(h1) * 1.75, y: q0.y + Math.sin(h1) * 1.75, a: h1 };
     }
     var main = leg.hs.reduce(function (m, x) { return x.e.len > m.e.len ? x : m; });
-    var lim = limitOf(main.e.tags), houses = Lr >= 20 ? housesAlong(run, leg.line, cutS, len) : [];
+    var W = driveWidth(main.e), lim = limitOf(main.e.tags), houses = Lr >= 20 ? housesAlong(run, leg.line, cutS, len, W) : [];
     var dens = houses.length / Math.max(len, 60) * 100;
     var env = (lim ? lim <= 50 : main.e.rank <= 1 || dens >= 2) || dens >= 3 ? "stad" : "land";
     var limit = snap(lim || (env === "stad" ? 50 : 70));
-    var road = { type: "road", len: len, bend: rel, pts: exact, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
+    var road = { type: "road", len: len, bend: rel, pts: exact, start: start, env: env, limit: limit, real: true, w: W, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
       edges: leg.hs.map(function (x) { return x.e.i; }) };
     // A small residential street: no pavement and no centre line, as in a villa area.
     if ((main.e.rank <= 1 && env === "stad") || main.e.service) { road.noWalk = true; road.small = true; }
@@ -786,5 +799,5 @@
     return best ? { name: nameOf(best.tags), d: bd } : null;
   }
 
-  window.RIKTIG = { search: search, load: load, loadFile: loadFile, streets: streets, steps: steps, nearStreet: nearStreet };
+  window.RIKTIG = { width: widthOf, search: search, load: load, loadFile: loadFile, streets: streets, steps: steps, nearStreet: nearStreet };
 })();
