@@ -3144,11 +3144,10 @@
   // ---------- real roads: pick a place ----------
   var realArea = null, realIdx = -1, placeBusy = false, realDest = null, realAt = null;   // realAt: the spot picked on the satellite map
   // ---------- Eskilstuna and Skogstorp ----------
-  // With `file` set, the map comes with the app (verktyg/karta.js packs it) and a drive starts at once;
-  // without, the streets around the middle are fetched like any other place. The packed maps were taken
-  // out on 2026-11-12 (his word) until road widths, lanes and hills work; they are rebuilt then.
+  // With `file` set, the map comes with the app (verktyg/karta.js packs it, hills included) and a drive
+  // starts at once; without, the streets around the middle are fetched like any other place.
   var HOMES = {
-    eskilstuna: { name: "Eskilstuna", lat: 59.3712, lon: 16.5094 },
+    eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json", lat: 59.3712, lon: 16.5094 },
     skogstorp: { name: "Skogstorp", file: "skogstorp.json", lat: 59.32496, lon: 16.48529 }
   };
   var homeAreas = {}, homeBusy = false, gpsHome = "eskilstuna";
