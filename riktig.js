@@ -12,8 +12,8 @@
   var OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass-api.de/api/interpreter",
     "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
   var SEARCH = "https://nominatim.openstreetmap.org/search";
-  var ROADS = "trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
-  var RANK = { trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
+  var ROADS = "motorway_link|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
+  var RANK = { motorway: 7, trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
   var R_ROADS = 1200, R_HOUSES = 1000, R_DRIVE = 900;    // metres around the place
   var RR = R_ROADS, RD = R_DRIVE;                        // the radii of the area being driven (bigger for a packed map)
   var DW = 2;                                            // the game's bend step (spel.js bendPiece)
@@ -295,7 +295,7 @@
   // A roundabout's size in the game: the ring the cars drive on (the map's ring line is its middle), and how far
   // from the middle the roads in and out start. A mini roundabout gets the game's usual size.
   function rbGeom(v, std) {
-    var path = v && v.rr ? Math.max(9, Math.min(28, v.rr)) : 10.75;
+    var path = v && v.rr ? Math.max(9, Math.min(120, v.rr)) : 10.75;   // up to the very big ones, like Årbyrondellen
     return { path: Math.round(path * 10) / 10, arm: Math.max(std, Math.round(path + 3.25 + 22)) };
   }
   // The game's ways: at a junction 0 ahead, 1 right, -1 left; in a roundabout exit 1 right, 2 ahead, 3 left.
@@ -572,12 +572,21 @@
         var by = bySector(arms, jsec, ch), ctrl = sig || ctrlAt(leg, last, arms);
         var npcs = ctrl === "hoger" ? [{ from: "right", to: "straight" }] : ctrl === "huvud" ? [{ from: "right", to: "straight", prio: false }] :
           ctrl === "ljus" ? [] : [{ from: "left", to: "straight", eta: 1.2 }, { from: "right", to: "straight", eta: 1.6 }];
-        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, real: { by: by, back: H(last.e, !last.f), key: leg.end.key } };
+        // Every street out of the crossing at its real angle (the game's: 0 right, 90 ahead, 180 left),
+        // so the car turns into the street chosen even where two go the same way.
+        var list = arms.filter(function (a) { return jsec(a.rel) !== null; }).sort(function (x, y) { return y.rel - x.rel; });
+        var jx = { arms: list.map(function (a) { return { a: Math.round(90 - a.rel / DEG), dir: jsec(a.rel), ok: a.ok }; }), wantArm: list.indexOf(ch.a) };
+        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, jx: jx,
+          real: { by: by, list: list, back: H(last.e, !last.f), key: leg.end.key } };
         var bad = [];
         [[1, "right"], [0, "fwd"], [-1, "left"]].forEach(function (x) { if (by[x[0]] && !by[x[0]].ok) bad.push(x[1]); });
         if (bad.length) { jst.noEntry = bad; jst.armSigns = bad.map(function (nm) { return { arm: nm, code: "C1" }; }); }
         var into = nameOf(ch.a.h.e.tags), on = into && into !== road.street ? (ch.s ? " in på " : ", in på ") + into : "";
-        road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + WORD[ch.s] + on + ". " + HINTS[ctrl]]);
+        // Two streets the same way: say which, by how sharp the turn is.
+        var same = list.filter(function (a) { return a.ok && jsec(a.rel) === ch.s; }).length, how = WORD[ch.s];
+        if (same > 1) { var dg = ch.a.rel / DEG, side = dg > 0 ? "höger" : "vänster", ad = Math.abs(dg);
+          how = ad < 15 ? "köra rakt fram" : ad < 65 ? "svänga halvt " + side : ad < 115 ? "svänga " + side : "svänga skarpt " + side; }
+        road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + how + on + ". " + HINTS[ctrl]]);
         if (run.dest) road.gps = { to: run.dest, left: ch.d != null ? len + ch.d : null, turn: ch.s, into: into || "" };
       }
     } else if (leg.kind === "round") {
@@ -666,7 +675,7 @@
     out.onExit = function (pc, course) {
       var r = pc.st.real;
       if (!r) return;
-      var k = pc.kind === "round" ? pc.exitK : pc.dir, arm = r.by[k];
+      var k = pc.kind === "round" ? pc.exitK : pc.dir, arm = pc.kind !== "round" && r.list && pc.armIdx != null ? r.list[pc.armIdx] : r.by[k];
       if (!arm && pc.kind === "round" && (r.backK ? k === r.backK : k === 4)) arm = { h: r.back };
       if (!arm) {   // the game let the car out where the map has no road: the nearest real one
         var ks = Object.keys(r.by).map(Number).sort(function (x, y) { return Math.abs(x - k) - Math.abs(y - k); });

@@ -75,6 +75,19 @@
   function turnFromArm(alpha, turn, lead, tail) {
     return turnLocal(turn, lead, tail).map(function (q) { return rot(q, alpha - 270); });
   }
+  // Through a real crossing (st.jx): from arm ain to arm aout at any angles, a smooth curve from the
+  // right lane in to the right lane out.
+  function jxLocal(ain, aout, lead, tail) {
+    var p1 = laneIn(ain, JH), p2 = laneOut(aout, JH), k = Math.max(2, 0.45 * Math.hypot(p2.x - p1.x, p2.y - p1.y));
+    var c1 = { x: p1.x - Math.cos(ain * DEG) * k, y: p1.y - Math.sin(ain * DEG) * k }, c2 = { x: p2.x - Math.cos(aout * DEG) * k, y: p2.y - Math.sin(aout * DEG) * k };
+    var pts = [laneIn(ain, JH + lead), p1];
+    for (var i = 1; i <= 12; i++) {
+      var t = i / 12, m = 1 - t;
+      pts.push({ x: m * m * m * p1.x + 3 * m * m * t * c1.x + 3 * m * t * t * c2.x + t * t * t * p2.x, y: m * m * m * p1.y + 3 * m * m * t * c1.y + 3 * m * t * t * c2.y + t * t * t * p2.y });
+    }
+    pts.push(laneOut(aout, JH + tail));
+    return pts;
+  }
   // Roundabout path from arm ain to arm aout (degrees), traffic going anticlockwise as seen from above.
   function laneIn(a, t) { return { x: t * Math.cos(a * DEG) - 1.75 * Math.sin(a * DEG), y: t * Math.sin(a * DEG) + 1.75 * Math.cos(a * DEG) }; }
   function laneOut(a, t) { return { x: t * Math.cos(a * DEG) + 1.75 * Math.sin(a * DEG), y: t * Math.sin(a * DEG) - 1.75 * Math.cos(a * DEG) }; }
@@ -457,8 +470,8 @@
     var out = [], t, r;
     if (q.kind === "road" || q.kind === "mv") for (t = 0; t <= q.len; t += 3) out.push(q.at(-1.75, t));
     else if (q.kind === "junction") {
-      [270, 0, 90, 180].forEach(function (al) {
-        if (al !== 270 && !q.arms[al]) return;
+      (q.st.jx ? [270].concat(q.st.jx.arms.map(function (a) { return a.a; })) : [270, 0, 90, 180]).forEach(function (al) {
+        if (!q.st.jx && al !== 270 && !q.arms[al]) return;
         for (r = 0; r <= JH + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
       });
     } else if (q.kind === "round") {
@@ -517,7 +530,11 @@
     if (st.ctrl === "vaj") course.addSign(pc.s0 - 1, { code: "B1" }, pc.env);
     // Signs for one arm: they stand where that road starts and face the cars turning into it.
     (st.armSigns || []).forEach(function (as) {
-      var al = armOf(as.arm), dir = { x: Math.cos(al * DEG), y: Math.sin(al * DEG) }, rn = { x: dir.y, y: -dir.x };
+      var al = armOf(as.arm);
+      if (st.jx) { var ai = -1, dd = { right: 1, fwd: 0, left: -1 }[as.arm], bd = 1e9, mid = al;
+        st.jx.arms.forEach(function (a, i) { var d = Math.abs(angDiff(a.a * DEG, mid * DEG)); if (a.dir === dd && !a.ok && d < bd) { bd = d; ai = i; } });
+        if (ai >= 0) al = st.jx.arms[ai].a; }
+      var dir = { x: Math.cos(al * DEG), y: Math.sin(al * DEG) }, rn = { x: dir.y, y: -dir.x };
       var q = toG(pc.C, dir.x * (JH + 1.5) + rn.x * (HW + 1.6), dir.y * (JH + 1.5) + rn.y * (HW + 1.6));
       course.addSign(pc.s0, { code: as.code, pos: { x: q.x, y: q.y, a: pc.C.a + (90 - al) * DEG } }, pc.env);
     });
@@ -1205,26 +1222,51 @@
     G.lane = lane; G.lanePiece = pc.index;
   }
   function armOk(pc, d) { return d === 0 ? pc.arms[90] : d === 1 ? pc.arms[0] : pc.arms[180]; }
+  // A real crossing's street for a way (-1, 0, 1): the instructor's when it is that way, else the one
+  // nearest the middle of that way. -1 when there is none.
+  function pickArm(pc, dir) {
+    var A = pc.st.jx.arms, w = pc.st.jx.wantArm;
+    if (w >= 0 && A[w] && A[w].dir === dir) return w;
+    var mid = dir === 0 ? 90 : dir === 1 ? 0 : 180, best = -1, bd = 1e9;
+    A.forEach(function (a, i) { var d = Math.abs(angDiff(a.a * DEG, mid * DEG)) + (a.ok ? 0 : 3); if (a.dir === dir && d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  // The car's way through: into a real crossing's street, or the game's square crossing.
+  function myPath(pc, dir, idx) {
+    if (pc.st.jx && idx >= 0) return [{ x: 1.75, y: -JH }].concat(jxLocal(270, pc.st.jx.arms[idx].a, 0, 0).slice(2));
+    return [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1));
+  }
   function manualJunction(pc) {
     var p = G.p, L = localTo(pc.C);
     if (!pc.entered && L.w > -JH - 1.5) {
       pc.entered = true; pc.entryBlink = p.blink; pc.entryBlinkS = p.blinkS; pc.maxV = 0;
       var guess = p.blink && armOk(pc, p.blink) ? p.blink : armOk(pc, 0) ? 0 : pc.want;
       if (pc.st.ctrl === "stopp" && !pc.stopped) fault("stop:" + pc.index, "Du stannade inte vid stopplinjen. Vid stopplikt ska bilen stå helt still.", true);
-      yieldCheck(pc, polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(guess, 0, 0).slice(1))));
+      yieldCheck(pc, polyG(pc.C, myPath(pc, guess, pc.st.jx ? pickArm(pc, guess) : -1)));
     }
     if (!pc.entered) return;
     pc.maxV = Math.max(pc.maxV, p.v);
-    var dir = L.w > JH + 1.5 && Math.abs(L.u) < JH ? 0 : L.u > JH + 1.5 ? 1 : L.u < -JH - 1.5 ? -1 : null;
-    if (dir === null) return;
-    if (!armOk(pc, dir)) return crash("Du körde av vägen!");
+    var dir, idx = -1;
+    if (pc.st.jx) {
+      // A real crossing: out past the middle, along the street nearest the way the car went.
+      if (Math.hypot(L.u, L.w) < JH + 1.5 || L.w < -JH + 1) return;
+      var ang = Math.atan2(L.w, L.u), bd = 9;
+      pc.st.jx.arms.forEach(function (a, i) { var d = Math.abs(angDiff(ang, a.a * DEG)); if (d < bd) { bd = d; idx = i; } });
+      if (idx < 0 || bd > 32 * DEG) return crash("Du körde av vägen!");
+      dir = pc.st.jx.arms[idx].dir;
+    } else {
+      dir = L.w > JH + 1.5 && Math.abs(L.u) < JH ? 0 : L.u > JH + 1.5 ? 1 : L.u < -JH - 1.5 ? -1 : null;
+      if (dir === null) return;
+      if (!armOk(pc, dir)) return crash("Du körde av vägen!");
+    }
     signRules(pc, dir);
     if (dir !== pc.want && !pc.st.free) fault("route:" + pc.index, pc.st.routeMsg || (pc.want === 0 ? "Vi skulle köra rakt fram." : pc.want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster."), false);
     if (dir !== 0 && pc.entryBlink !== dir) fault("blink:" + pc.index, "Du glömde blinka före svängen.", false);
     else if (dir !== 0 && pc.entryBlinkS > pc.s0 - 22) fault("blink:" + pc.index, "Blinka tidigare, i god tid före svängen.", false);
     if (dir !== 0 && pc.maxV * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
-    pc.dir = dir;
-    pc.poly = polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1)));
+    if (pc.st.jx && idx !== pc.st.jx.wantArm && dir === pc.want && !pc.st.free) fault("route:" + pc.index, "Fel gata. Det går två vägar åt det hållet, vi skulle ta den andra.", false);
+    pc.dir = dir; pc.armIdx = pc.st.jx ? idx : null;
+    pc.poly = polyG(pc.C, myPath(pc, dir, idx));
     pc.len = pc.poly.len; pc.open = false;
     if (dir !== 0) p.blink = 0;
     G.course.close(pc);
@@ -1617,7 +1659,14 @@
     var land = pc.env !== "stad";
     var vt = (spec.v || (land ? 70 : 40)) / KMH;
     lead = lead || (land ? 160 : 90);
-    var poly = polyG(pc.C, turnFromArm(arm, turn, lead, 120));
+    var poly;
+    if (pc.st.jx) {
+      // From and to the real streets nearest those ways (ours is the way in, at 270).
+      var real = function (a) { if (a === 270) return 270; var i = pickArm(pc, a === 0 ? 1 : a === 90 ? 0 : -1); return i < 0 ? null : pc.st.jx.arms[i].a; };
+      var ra = real(arm), ro = real(out);
+      if (ra === null || ro === null) return null;
+      poly = polyG(pc.C, jxLocal(ra, ro, lead, 120));
+    } else poly = polyG(pc.C, turnFromArm(arm, turn, lead, 120));
     var p = G.p, eta = Math.max(1.6, (pc.s0 - p.s) / Math.max(p.v, 7)) * (spec.eta || 1);
     var t0 = spec.prio === false ? lead - 45 : Math.max(0, lead - vt * eta);
     if (spec.at != null) t0 = lead - spec.at;
@@ -1677,10 +1726,8 @@
     if (dir !== want && !pc.st.free) fault("route:" + pc.index, pc.st.routeMsg || (want === 0 ? "Vi skulle köra rakt fram." : want === 1 ? "Vi skulle svänga höger." : "Vi skulle svänga vänster."), false);
     if (dir !== 0 && p.v * KMH > 32) fault("turn:" + pc.index, "För hög fart i svängen!", false);
     if (st.ctrl === "stopp" && !pc.stopped) fault("stop:" + pc.index, "Du stannade inte vid stopplinjen. Vid stopplikt ska bilen stå helt still.", true);
-    pc.dir = dir;
-    var local = turnLocal(dir, 0, 0).slice(1);
-    local.unshift({ x: 1.75, y: -JH });
-    pc.poly = polyG(pc.C, local);
+    pc.dir = dir; pc.armIdx = pc.st.jx ? pickArm(pc, dir) : null;
+    pc.poly = polyG(pc.C, myPath(pc, dir, pc.armIdx == null ? -1 : pc.armIdx));
     pc.len = pc.poly.len; pc.open = false;
     yieldCheck(pc, pc.poly);
     if (p.blink) p.blink = 0;
@@ -3627,7 +3674,7 @@
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
     draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30, pc.g)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30, pc.g)); }, turnPath: function (pc, dir) { return polyG(pc.C, myPath(pc, dir, pc.st.jx ? pickArm(pc, dir) : -1)); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");
