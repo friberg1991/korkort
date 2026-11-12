@@ -573,6 +573,21 @@
   // the guard rail between the motorway's carriageways, a shelter at a bus stop.
   function roadside(api, pc) {
     var L = pc.len, st = pc.st, at = function (u, w) { return pc.at(u, w); };
+    // Bridges: a concrete edge and a railing along both sides, in 3 m lengths that follow the bends.
+    (st.bridges || []).forEach(function (b) {
+      var walk = pc.env === "stad" && !st.noWalk, pr = pc.parking ? 2.5 : 0;
+      var edges = walk ? [-5.25 - 2.6 - 0.35, 1.75 + pr + 2.6 + 0.35] : [-5.25 - 0.75, 1.75 + pr + 0.75];
+      edges.forEach(function (u) {
+        for (var w = b[0]; w < b[1] - 0.5; w += 3) {
+          var seg = Math.min(3, b[1] - w), q = at(u, w + seg / 2), r = new T.Group();
+          r.add(mesh(box(0.4, 0.35, seg + 0.05), mat(0xa19f97), 0, 0.17, 0));
+          r.add(mesh(box(0.08, 0.08, seg + 0.05), mat(0x5a6068), 0, 1.05, 0));
+          r.add(mesh(box(0.06, 0.06, seg + 0.05), mat(0x5a6068), 0, 0.65, 0));
+          r.add(mesh(box(0.1, 0.75, 0.1), mat(0x4a5058), 0, 0.7, 0));
+          place(r, q.x, q.y, q.a);
+        }
+      });
+    });
     if (pc.kind === "mv") {
       var c = at(-8.4, L / 2), rail = new T.Group();
       rail.add(mesh(new T.BoxGeometry(0.1, 0.32, L), mat(0xc9c9c4), 0, 0.6, 0));
@@ -593,6 +608,7 @@
     } else {
       // Kantstolpar: white posts with a black band, about every 50 m on both sides.
       for (var w2 = 25; w2 < L; w2 += 50) {
+        if ((st.bridges || []).some(function (b) { return w2 > b[0] - 3 && w2 < b[1] + 3; })) continue;   // the railing is there
         [[2.7, 0], [-6.2, Math.PI]].forEach(function (o) {
           var q2 = at(o[0], w2), post = new T.Group();
           post.add(mesh(box(0.12, 1.0, 0.12), mat(0xeceef0), 0, 0.5, 0));

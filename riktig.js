@@ -418,6 +418,50 @@
     });
     return out;
   }
+  // Bridges along a leg, as [from, to] in the game road's metres: where the map tags the way as a bridge
+  // (a packed map has no such tag), and where the road crosses water on the map.
+  function inPoly(pts, x, y) {
+    var c = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var a = pts[i], b = pts[j];
+      if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) c = !c;
+    }
+    return c;
+  }
+  function bridgesAlong(run, leg, cutS, Lr, len) {
+    var on = [], k = len / Lr, t, c = 0;
+    var water = (run.area.lands || []).filter(function (l) { return l.k === "water"; });
+    leg.hs.forEach(function (x) {
+      var b = x.e.tags.bridge;
+      if (b && b !== "no") on.push([c, c + x.e.len]);
+      c += x.e.len;
+    });
+    if (water.length) {
+      var isWet = function (x, y) { return water.some(function (l) { return x >= l.bb[0] && x <= l.bb[2] && y >= l.bb[1] && y <= l.bb[3] && inPoly(l.pts, x, y); }); };
+      // Water on both sides of the road too, out past the pavement: a street along a quay is no bridge,
+      // even where the map's water edge overlaps it a little.
+      var crosses = function (t0, t1) {
+        for (var f = 0.25; f < 0.8; f += 0.25) {
+          var tm = t0 + (t1 - t0) * f, a = pointAt(leg.line, tm - 2), b = pointAt(leg.line, tm + 2), m = pointAt(leg.line, tm);
+          var dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1, nx = -dy / l, ny = dx / l;
+          if (isWet(m.x + nx * 12, m.y + ny * 12) && isWet(m.x - nx * 12, m.y - ny * 12)) return true;
+        }
+        return false;
+      };
+      var from = null;
+      for (t = cutS; t <= cutS + Lr + 2; t += 2) {
+        var q = pointAt(leg.line, Math.min(t, cutS + Lr)), wet = t <= cutS + Lr && isWet(q.x, q.y);
+        if (wet && from === null) from = t;
+        if (!wet && from !== null) { if (crosses(from, t)) on.push([from - 4, t + 2]); from = null; }
+      }
+    }
+    // In the game road's metres, joined where they meet, short ones (a ditch, a culvert) left out.
+    var out = [];
+    on.map(function (r) { return [Math.max(0, (r[0] - cutS) * k), Math.min(len, (r[1] - cutS) * k)]; })
+      .filter(function (r) { return r[1] - r[0] >= 8; }).sort(function (a, b) { return a[0] - b[0]; })
+      .forEach(function (r) { var l = out[out.length - 1]; if (l && r[0] <= l[1] + 4) l[1] = Math.max(l[1], r[1]); else out.push([r1(r[0]), r1(r[1])]); });
+    return out;
+  }
   // P is where the game's road starts (the way out of the junction before, always at right angles in the
   // game, so a little off the real road); null for the first road, which starts on the real one.
   function legSteps(run, leg, startKind, offset, P) {
@@ -468,6 +512,13 @@
       edges: leg.hs.map(function (x) { return x.e.i; }) };
     // A small residential street: no pavement and no centre line, as in a villa area.
     if (main.e.rank <= 1 && env === "stad") { road.noWalk = true; road.small = true; }
+    if (Lr >= 12) {
+      road.bridges = bridgesAlong(run, leg, cutS, Lr, len);
+      if (road.bridges.length && !run.bridgeSaid) {
+        run.bridgeSaid = true;
+        road.say.push([Math.max(1, road.bridges[0][0] - 40), "Nu kör vi över en bro. Tänk på att broar kan vara hala när resten av vägen inte är det, de kyls ner både uppifrån och underifrån."]);
+      }
+    }
     if (run.env && env !== run.env) road.signs.push({ s: 3, code: env === "stad" ? "E5" : "E6" });
     // Walking pace has its own signs: E9 where it starts, E10 where it ends (then 50 unless a sign says else).
     if (limit === WALK && run.limit !== WALK) {

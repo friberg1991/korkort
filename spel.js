@@ -2072,9 +2072,18 @@
     }
   }
   function drawRoadGround(pc) { inFrame(pc, drawRoadGroundL); }
+  // A bridge's deck reaches out to its railings: past the pavement where there is one.
+  function bridgeEdges(pc) {
+    var walk = pc.env === "stad" && !pc.st.noWalk, pr = pc.parking ? 2.5 : 0;
+    return walk ? [-5.25 - 2.6 - 0.5, 1.75 + pr + 2.6 + 0.5] : [-5.25 - 0.9, 1.75 + pr + 0.9];
+  }
   function drawRoadGroundL(pc) {
     var st = pc.st;
     var L = pc.len;
+    (st.bridges || []).forEach(function (b) {
+      var e = bridgeEdges(pc);
+      rect("#a19f97", e[0], e[1], b[0], b[1]);
+    });
     if (pc.kind === "mv") {
       pc.decor.forEach(function (d) { disc(COL.tree, d.u, -d.w, d.r); disc(COL.treeLight, d.u - d.r * 0.25, -d.w - d.r * 0.25, d.r * 0.55); });
     } else if (pc.env === "stad") {
@@ -2116,7 +2125,18 @@
   function taper2(uStart, w0, w1, u1) { ctx.fillStyle = COL.asph; ctx.beginPath(); ctx.moveTo(uStart, -w0); ctx.lineTo(u1, -w1); ctx.lineTo(uStart, -w1); ctx.closePath(); ctx.fill(); }
 
   function drawRoadMarks(pc) { inFrame(pc, drawRoadMarksL); }
+  // Railings along both edges of a bridge, with a post every 2 m.
+  function drawBridgeRails(pc) {
+    (pc.st.bridges || []).forEach(function (b) {
+      var e = bridgeEdges(pc);
+      [e[0] + 0.15, e[1] - 0.15].forEach(function (u) {
+        rect("#4a5058", u - 0.13, u + 0.13, b[0], b[1]);
+        for (var w = b[0]; w <= b[1]; w += 2) rect("#2c3036", u - 0.2, u + 0.2, w - 0.15, w + 0.15);
+      });
+    });
+  }
   function drawRoadMarksL(pc) {
+    drawBridgeRails(pc);
     var L = pc.len, st = pc.st, ph = pc.s0;
     if (pc.kind === "mv") {
       ctx.fillStyle = COL.paint;
