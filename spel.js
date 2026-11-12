@@ -259,7 +259,7 @@
     for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) (A.grid[gx + "," + gy] || []).forEach(function (h) { if (all || !h.hide) out.push(h); });
     return out;
   }
-  function mapRoadWidth(e) { return e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : 5.6; }
+  function mapRoadWidth(e) { return e.rank >= 4 ? 8.5 : e.rank === 3 ? 7 : e.rank === 2 ? 6.2 : e.rank === 0 ? 4.5 : e.rank < 0 ? 4.2 : 5.6; }
   // Pavement only along bigger streets; small residential streets have a narrow gravel edge.
   function mapWalk(e) { return e.rank >= 2 ? 5.2 : 1.2; }
   // Whether point q is inside house h, or closer to its walls than m.
@@ -527,7 +527,7 @@
     };
     pc.endPose = function () { return pc.poly.at(pc.poly.len); };
     if (st.ctrl === "stopp") course.addSign(pc.s0 - 1, { code: "B2" }, pc.env);
-    if (st.ctrl === "vaj") course.addSign(pc.s0 - 1, { code: "B1" }, pc.env);
+    if (st.ctrl === "vaj" && !st.utfart) course.addSign(pc.s0 - 1, { code: "B1" }, pc.env);
     // Signs for one arm: they stand where that road starts and face the cars turning into it.
     (st.armSigns || []).forEach(function (as) {
       var al = armOf(as.arm);
@@ -2337,7 +2337,7 @@
     ctx.fillStyle = COL.paint;
     dirs.forEach(function (d) {
       var kind = entryLine(pc, d.a);
-      if (!kind) return;
+      if (!kind || (pc.st.utfart && d.a === 270)) return;   // an utfart has no line
       // Across the lane coming in: a driver heading back along -d has the lane on his right of -d.
       var rx = d.y, ry = -d.x, r0 = d.a === 270 ? JH : HW + 1.2;
       var P = function (r, u) { return { x: C.x + d.x * r + rx * u, y: C.y + d.y * r + ry * u }; };

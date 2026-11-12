@@ -5,9 +5,9 @@
 const fs = require("fs"), path = require("path");
 const PLACES = { eskilstuna: [59.3712, 16.5094, 4000, 3000], skogstorp: [59.32496, 16.48529, 2500, 2000] };
 const NAME = process.argv[2] || "eskilstuna", [LAT, LON, R_ROADS, R_HOUSES] = PLACES[NAME];
-const ROADS = "motorway_link|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
+const ROADS = "service|motorway_link|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
 const KEEP = ["highway", "name", "ref", "oneway", "maxspeed", "junction", "motor_vehicle", "motorcar", "access", "area", "crossing", "traffic_calming",
-  "bridge", "layer", "lanes", "lanes:forward", "lanes:backward", "turn:lanes", "turn:lanes:forward", "turn:lanes:backward", "width"];
+  "service", "bridge", "layer", "lanes", "lanes:forward", "lanes:backward", "turn:lanes", "turn:lanes:forward", "turn:lanes:backward", "width"];
 // "ytor" as a second word fetches only the ground areas and adds them to the existing file
 // (a big town in one go can be too much for the map server).
 const ONLY_LAND = process.argv[3] === "ytor";
@@ -15,7 +15,9 @@ const qLand = `[out:json][timeout:180];` +
   `(way["landuse"~"^(forest|grass|meadow|farmland|recreation_ground|cemetery)$"](around:${R_HOUSES},${LAT},${LON});` +
   `way["natural"~"^(wood|water|scrub)$"](around:${R_HOUSES},${LAT},${LON});way["leisure"~"^(pitch|park|playground)$"](around:${R_HOUSES},${LAT},${LON});` +
   `rel["landuse"~"^(forest|meadow|farmland)$"](around:${R_HOUSES},${LAT},${LON});rel["natural"~"^(wood|water)$"](around:${R_HOUSES},${LAT},${LON}););out geom qt;`;
-const qFull = `[out:json][timeout:180];way["highway"~"^(${ROADS})$"](around:${R_ROADS},${LAT},${LON});out body qt;node(w);out body qt;` +
+// Service roads, but not driveways, car park aisles or private roads (riktig.js NOT_SERVICE).
+const NOT_SERVICE = '["service"!~"^(driveway|parking_aisle|drive-through|emergency_access)$"]["access"!~"^(private|no)$"]';
+const qFull = `[out:json][timeout:180];way["highway"~"^(${ROADS})$"]${NOT_SERVICE}(around:${R_ROADS},${LAT},${LON});out body qt;node(w);out body qt;` +
   `way["building"](around:${R_HOUSES},${LAT},${LON});out geom qt;` +
   // Ground: forest, water, sports pitches, parks and fields, so the map looks like the satellite image.
   `(way["landuse"~"^(forest|grass|meadow|farmland|recreation_ground|cemetery)$"](around:${R_HOUSES},${LAT},${LON});` +

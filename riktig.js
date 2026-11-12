@@ -12,8 +12,12 @@
   var OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass-api.de/api/interpreter",
     "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
   var SEARCH = "https://nominatim.openstreetmap.org/search";
-  var ROADS = "motorway_link|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
-  var RANK = { motorway: 7, trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
+  var ROADS = "service|motorway_link|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road|trunk_link|primary_link|secondary_link|tertiary_link";
+  var RANK = { service: -1, motorway: 7, trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, road: 2, residential: 1, living_street: 0 };
+  // Service roads (industrial areas, a school's road in) are drivable, but not a house's driveway,
+  // a car park's aisles or a private road: those would make a crossing of every gate.
+  var NOT_SERVICE = '["service"!~"^(driveway|parking_aisle|drive-through|emergency_access)$"]["access"!~"^(private|no)$"]';
+  function skipWay(t) { return t.highway === "service" && (/^(driveway|parking_aisle|drive-through|emergency_access)$/.test(t.service || "") || /^(private|no)$/.test(t.access || "")); }
   var R_ROADS = 1200, R_HOUSES = 1000, R_DRIVE = 900;    // metres around the place
   var RR = R_ROADS, RD = R_DRIVE;                        // the radii of the area being driven (bigger for a packed map)
   var DW = 2;                                            // the game's bend step (spel.js bendPiece)
@@ -21,7 +25,8 @@
   var WORD = { "0": "köra rakt fram", "1": "svänga höger", "-1": "svänga vänster" };
   var HINTS = {
     hoger: "Där gäller högerregeln.", stopp: "Där är det stopplikt, stanna helt vid linjen.", vaj: "Vi har väjningsplikt där.",
-    huvud: "De från sidan har väjningsplikt.", ljus: "Där är det trafikljus."
+    huvud: "De från sidan har väjningsplikt.", ljus: "Där är det trafikljus.",
+    utfart: "Vi kör ut från en utfart, så vi har väjningsplikt mot alla."
   };
   var GOOD = ["Bra!", "Snyggt.", "Fint kört."];
   function pick(a) { return a[Math.floor(RND() * a.length)]; }
@@ -54,7 +59,7 @@
   }
   function load(lat, lon) {
     var ar = "(around:" + R_ROADS + "," + lat + "," + lon + ")", ah = "(around:" + R_HOUSES + "," + lat + "," + lon + ")";
-    var q = '[out:json][timeout:90];way["highway"~"^(' + ROADS + ')$"]' + ar + ";out body qt;node(w);out body qt;" +
+    var q = '[out:json][timeout:90];way["highway"~"^(' + ROADS + ')$"]' + NOT_SERVICE + ar + ";out body qt;node(w);out body qt;" +
       'way["building"]' + ah + ";out geom qt;";
     return overpass(q).then(function (json) { return makeArea(json, lat, lon); });
   }
@@ -142,6 +147,7 @@
     arms.forEach(function (a) {
       var s = fn(a.rel), d = run.dist[hk(a.h)];
       if (!a.ok || s === null || d === undefined) return;
+      if (a.h.e.service) d += 400;   // the way there keeps to streets where it can
       if (!best || d < best.d) best = { a: a, s: s, w: 1, d: d };
     });
     return best || choose(arms, fn);
@@ -165,7 +171,7 @@
     return { x: p[lo].x + (p[lo + 1].x - p[lo].x) * f, y: p[lo].y + (p[lo + 1].y - p[lo].y) * f };
   }
   function drivable(t) {
-    if (t.area === "yes") return false;
+    if (t.area === "yes" || skipWay(t)) return false;
     var mv = t.motor_vehicle || t.motorcar || "";
     if (/^(no|private)$/.test(mv)) return false;
     if (/^(no|private)$/.test(t.access || "") && !/^(yes|destination|permissive)$/.test(mv)) return false;
@@ -221,7 +227,7 @@
       var t = w.tags, ow = /^(yes|true|1)$/.test(t.oneway || "") ? 1 : /^(-1|reverse)$/.test(t.oneway || "") ? -1 : 0;
       var hw = t.highway.replace("_link", ""), L = line(pts);
       if (L.len < 0.5) return;
-      var e = { a: a, b: b, pts: pts, tags: t, rank: RANK[hw] != null ? RANK[hw] : 1, ow: ow, seen: 0, len: L.len, lf: L };
+      var e = { a: a, b: b, pts: pts, tags: t, rank: RANK[hw] != null ? RANK[hw] : 1, ow: ow, seen: 0, len: L.len, lf: L, service: hw === "service" };
       e.i = edges.length; edges.push(e); a.edges.push(e); b.edges.push(e);
     }
     ways.forEach(function (w) {
@@ -317,7 +323,8 @@
         var leg = legFrom(h), next = [];
         if (leg.kind !== "dead") {
           var fn = leg.kind === "round" ? rall : jsec;
-          armsAt(leg.end, leg.hs[leg.hs.length - 1]).forEach(function (a) { if (a.ok && fn(a.rel) !== null) next.push(hk(a.h)); });
+          // Through service roads is no way on for the instructor: only real streets keep a road live.
+          armsAt(leg.end, leg.hs[leg.hs.length - 1]).forEach(function (a) { if (a.ok && !a.h.e.service && fn(a.rel) !== null) next.push(hk(a.h)); });
         }
         succ[hk(h)] = next; all.push(hk(h)); live[hk(h)] = true;
       });
@@ -336,6 +343,7 @@
     var leg = legFrom(a.h);
     var seen = 0;
     leg.hs.forEach(function (x) { seen += x.e.seen; });
+    if (a.h.e.service) return 0;   // the instructor keeps to streets; only he may turn in (choose falls back when nothing else)
     var w = (1 + 0.25 * a.h.e.rank) / (1 + 2 * seen);
     var dc = Math.hypot(leg.end.x, leg.end.y);
     if (dc > RD - 250) w *= Math.max(0.03, (RD - dc) / 250);
@@ -375,6 +383,7 @@
     var m = t.maxspeed || "";
     if (t.highway === "living_street" || /walk/i.test(m)) return WALK;
     if (/urban/i.test(m)) return 50;
+    if (!m && t.highway === "service") return 30;
     if (/rural/i.test(m)) return 70;
     var n = parseInt(m, 10);
     if (n > 0 && n <= WALK) return WALK;
@@ -511,7 +520,7 @@
     var road = { type: "road", len: len, bend: rel, start: start, env: env, limit: limit, real: true, street: nameOf(main.e.tags), houses: houses, signs: [], say: [],
       edges: leg.hs.map(function (x) { return x.e.i; }) };
     // A small residential street: no pavement and no centre line, as in a villa area.
-    if (main.e.rank <= 1 && env === "stad") { road.noWalk = true; road.small = true; }
+    if ((main.e.rank <= 1 && env === "stad") || main.e.service) { road.noWalk = true; road.small = true; }
     if (Lr >= 12) {
       road.bridges = bridgesAlong(run, leg, cutS, Lr, len);
       if (road.bridges.length && !run.bridgeSaid) {
@@ -569,14 +578,16 @@
     if (leg.kind === "junction") {
       var arms = armsAt(leg.end, last), ch = chooseFor(run, arms, jsec);
       if (ch) {
-        var by = bySector(arms, jsec, ch), ctrl = sig || ctrlAt(leg, last, arms);
+        var by = bySector(arms, jsec, ch), ctrl = sig || ctrlAt(leg, last, arms), utfart = ctrl === "utfart";
+        if (utfart) ctrl = "vaj";   // the game's give-way, without its sign and teeth
+        var onlyService = !last.e.service && arms.every(function (a) { return a.h.e.service; });
         var npcs = ctrl === "hoger" ? [{ from: "right", to: "straight" }] : ctrl === "huvud" ? [{ from: "right", to: "straight", prio: false }] :
           ctrl === "ljus" ? [] : [{ from: "left", to: "straight", eta: 1.2 }, { from: "right", to: "straight", eta: 1.6 }];
         // Every street out of the crossing at its real angle (the game's: 0 right, 90 ahead, 180 left),
         // so the car turns into the street chosen even where two go the same way.
         var list = arms.filter(function (a) { return jsec(a.rel) !== null; }).sort(function (x, y) { return y.rel - x.rel; });
         var jx = { arms: list.map(function (a) { return { a: Math.round(90 - a.rel / DEG), dir: jsec(a.rel), ok: a.ok }; }), wantArm: list.indexOf(ch.a) };
-        jst = { type: "junction", ctrl: ctrl, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, jx: jx,
+        jst = { type: "junction", ctrl: ctrl, utfart: utfart, want: ch.s, right: !!by[1], fwd: !!by[0], left: !!by[-1], good: pick(GOOD), npcs: npcs, jx: jx,
           real: { by: by, list: list, back: H(last.e, !last.f), key: leg.end.key } };
         var bad = [];
         [[1, "right"], [0, "fwd"], [-1, "left"]].forEach(function (x) { if (by[x[0]] && !by[x[0]].ok) bad.push(x[1]); });
@@ -586,7 +597,8 @@
         var same = list.filter(function (a) { return a.ok && jsec(a.rel) === ch.s; }).length, how = WORD[ch.s];
         if (same > 1) { var dg = ch.a.rel / DEG, side = dg > 0 ? "höger" : "vänster", ad = Math.abs(dg);
           how = ad < 15 ? "köra rakt fram" : ad < 65 ? "svänga halvt " + side : ad < 115 ? "svänga " + side : "svänga skarpt " + side; }
-        road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + how + on + ". " + HINTS[ctrl]]);
+        // Straight past a service road's mouth is not worth a word.
+        if (!(onlyService && ch.s === 0)) road.say.push([Math.max(1, len - 90), "I nästa korsning ska vi " + how + on + ". " + HINTS[utfart ? "utfart" : ctrl]]);
         if (run.dest) road.gps = { to: run.dest, left: ch.d != null ? len + ch.d : null, turn: ch.s, into: into || "" };
       }
     } else if (leg.kind === "round") {
@@ -631,8 +643,12 @@
   }
   // Who goes first where this road meets the others: signals and signs from the map, else the size of the roads.
   function ctrlAt(leg, last, arms) {
-    var v = leg.end, mine = last.e.rank, others = 0, sideYields = false, tg = (v.node && v.node.tags) || {};
+    var v = leg.end, mine = last.e.rank, others = -9, sideYields = false, tg = (v.node && v.node.tags) || {};
+    // Out of a service road onto a street: an utfart, so we give way to all. Service roads to the side give way to us.
+    if (last.e.service && arms.some(function (a) { return !a.h.e.service; })) return "utfart";
+    if (!last.e.service && arms.every(function (a) { return a.h.e.service; })) return "huvud";
     arms.forEach(function (a) {
+      if (a.h.e.service) return;
       others = Math.max(others, a.h.e.rank);
       var L = hline(a.h);
       L.pts.forEach(function (q, i) { if (i && L.cum[i] < 35 && q.tags && /^(stop|give_way)$/.test(q.tags.highway || "")) sideYields = true; });
