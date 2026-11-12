@@ -2715,7 +2715,7 @@
 
   // ---------- screens ----------
   function show(id) {
-    ["menu", "game", "paused", "result", "place", "gpsPick"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
+    ["menu", "game", "paused", "result", "place", "gpsPick", "spawnPick"].forEach(function (s) { document.getElementById(s).hidden = s !== id && !(id === "paused" && s === "game") && !(id === "result" && s === "game"); });
     if (id === "game") resize();
   }
   function pause() { if (!G || G.over) return; G.paused = true; document.getElementById("endRun").hidden = !G.lesson.endless; keys.gas = keys.brake = keys.left = keys.right = false; if (window.speechSynthesis) speechSynthesis.cancel(); siren(0); show("paused"); }
@@ -2916,7 +2916,7 @@
   document.getElementById("optSound").addEventListener("change", function (e) { store.sound = e.target.checked; saveStore(); ensureAudio(); });
   document.getElementById("pause").addEventListener("click", pause);
   // ---------- real roads: pick a place ----------
-  var realArea = null, realIdx = -1, placeBusy = false, realDest = null;
+  var realArea = null, realIdx = -1, placeBusy = false, realDest = null, realAt = null;   // realAt: the spot picked on the satellite map
   // ---------- Eskilstuna and Skogstorp: the maps come with the app, so a drive starts at once ----------
   var HOMES = {
     eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json", lat: 59.3712, lon: 16.5094 },
@@ -2936,7 +2936,7 @@
   }
   function driveHome(id, dest) {
     withHome(id, dest ? "gpsMsg" : "eskilMsg", function (area) {
-      realArea = area; realDest = dest || null;
+      realArea = area; realDest = dest || null; realAt = null;
       startLesson(LESSONS.findIndex(function (L) { return L.real; }));
     });
   }
@@ -2991,22 +2991,28 @@
     });
   }
   function openPlace(i) {
-    realIdx = i; realDest = null; placeMsg("");
+    realIdx = i; realDest = null; realAt = null; placeMsg("");
     placeButtons(store.places || [], "Senast");
     show("place");
   }
-  function loadPlace(pl) {
+  // say: where the messages go (the place screen, or the start picker); ready: called just before the drive starts.
+  function loadPlace(pl, say, ready) {
+    say = say || placeMsg;
     if (placeBusy) return;
-    if (realArea && realArea.lat === pl.lat && realArea.lon === pl.lon) { startLesson(realIdx); return; }
+    if (realArea && realArea.lat === pl.lat && realArea.lon === pl.lon) { realAt = null; if (ready) ready(); startLesson(realIdx); return; }
     placeBusy = true;
-    placeMsg("Hämtar vägar och hus runt " + pl.name.split(",")[0] + "… Det kan ta upp till en minut.");
+    say("Hämtar vägar och hus runt " + pl.name.split(",")[0] + "… Det kan ta upp till en minut.");
     window.RIKTIG.load(pl.lat, pl.lon).then(function (area) {
       placeBusy = false;
-      if (!area.ok) { placeMsg("Hittade inga bilvägar där. Prova en annan plats."); return; }
-      area.name = pl.name; area.lat = pl.lat; area.lon = pl.lon; realArea = area;
+      if (!area.ok) { say("Hittade inga bilvägar där. Prova en annan plats."); return; }
+      if (pl.pin) {   // a spot from the map: named after the street there, so the list and the instructor say something useful
+        var st = window.RIKTIG.nearStreet(area, 0, 0);
+        pl = { name: (st && st.name ? st.name + ", vald på kartan" : "Vald plats på kartan"), lat: pl.lat, lon: pl.lon };
+      }
+      area.name = pl.name; area.lat = pl.lat; area.lon = pl.lon; realArea = area; realAt = null;
       store.places = [pl].concat((store.places || []).filter(function (q) { return q.name !== pl.name; })).slice(0, 5); saveStore();
-      placeMsg(""); startLesson(realIdx);
-    }).catch(function () { placeBusy = false; placeMsg("Kunde inte hämta kartan. Kolla att du är uppkopplad och försök igen om en stund."); });
+      say(""); if (ready) ready(); startLesson(realIdx);
+    }).catch(function () { placeBusy = false; say("Kunde inte hämta kartan. Kolla att du är uppkopplad och försök igen om en stund."); });
   }
   document.getElementById("placeForm").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -3027,6 +3033,149 @@
     }, function () { placeMsg("Kunde inte se var du är. Skriv en plats i stället."); }, { timeout: 15000, maximumAge: 60000 });
   });
   document.getElementById("placeBack").addEventListener("click", function () { buildMenu(); show("menu"); });
+  // ---------- pick the start on a satellite map ----------
+  // The map moves under a fixed pin in the middle. Inside Eskilstuna's or Skogstorp's packed map the
+  // drive starts at once on the street nearest the pin; anywhere else the roads are fetched around it.
+  var SP_R = { eskilstuna: 3500, skogstorp: 2000 };    // metres from the middle where a packed map has roads all round
+  var spCv = document.getElementById("spawnCv"), spCtx = spCv.getContext("2d"), spTiles = {}, spTileN = 0;
+  var sp = null, spDirty = true, spW = 0, spH = 0, spDpr = 1, spInfoT = 0, spOn = false;
+  function spMsg(t) { document.getElementById("spawnMsg").textContent = t || ""; }
+  function spWorld(lat, lon, z) {
+    var n = 256 * Math.pow(2, z), r = lat * DEG;
+    return { x: (lon + 180) / 360 * n, y: (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n };
+  }
+  function spLatLon(x, y, z) {
+    var n = 256 * Math.pow(2, z);
+    return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) / DEG, lon: x / n * 360 - 180 };
+  }
+  function spTile(z, x, y) {
+    var k = z + "/" + y + "/" + x, t = spTiles[k];
+    if (!t) {
+      if (spTileN > 400) { spTiles = {}; spTileN = 0; }
+      t = spTiles[k] = new Image(); spTileN++;
+      t.onload = function () { t.ok = true; spDirty = true; };
+      t.src = SAT_URL + k;
+    }
+    return t.ok ? t : null;
+  }
+  function spResize() {
+    spDpr = Math.min(2, window.devicePixelRatio || 1); spW = window.innerWidth; spH = window.innerHeight;
+    spCv.width = Math.round(spW * spDpr); spCv.height = Math.round(spH * spDpr); spDirty = true;
+  }
+  function spDraw() {
+    if (!spOn) return;
+    requestAnimationFrame(spDraw);
+    if (!spDirty) return;
+    spDirty = false;
+    var tz = Math.max(3, Math.min(19, Math.round(sp.z))), sc = Math.pow(2, sp.z - tz), c = spWorld(sp.lat, sp.lon, tz), n = Math.pow(2, tz);
+    spCtx.setTransform(spDpr, 0, 0, spDpr, 0, 0);
+    spCtx.fillStyle = "#1b2229"; spCtx.fillRect(0, 0, spW, spH);
+    spCtx.translate(spW / 2, spH / 2); spCtx.scale(sc, sc); spCtx.translate(-c.x, -c.y);
+    var hw = spW / 2 / sc, hh = spH / 2 / sc;
+    var x0 = Math.floor((c.x - hw) / 256), x1 = Math.floor((c.x + hw) / 256), y0 = Math.max(0, Math.floor((c.y - hh) / 256)), y1 = Math.min(n - 1, Math.floor((c.y + hh) / 256));
+    for (var tx = x0; tx <= x1; tx++) for (var ty = y0; ty <= y1; ty++) {
+      var wx = ((tx % n) + n) % n, im = spTile(tz, wx, ty);
+      if (im) { spCtx.drawImage(im, tx * 256, ty * 256, 256.5, 256.5); continue; }
+      // While a tile loads, a bigger one from further out stands in, so the map is never blank.
+      for (var up = 1; up <= 3 && tz - up >= 0; up++) {
+        var f = Math.pow(2, up), p = spTiles[(tz - up) + "/" + Math.floor(ty / f) + "/" + Math.floor(wx / f)];
+        if (p && p.ok) {
+          var s = 256 / f;
+          spCtx.drawImage(p, (wx % f) * s, (ty % f) * s, s, s, tx * 256, ty * 256, 256.5, 256.5); break;
+        }
+      }
+    }
+  }
+  // Which packed map the pin is in, and the pin's place in that map's metres.
+  function spHome() {
+    var best = null;
+    Object.keys(HOMES).forEach(function (id) {
+      var H = HOMES[id], kx = 111320 * Math.cos(H.lat * DEG), x = (sp.lon - H.lon) * kx, y = -(sp.lat - H.lat) * 111320, d = Math.hypot(x, y) / SP_R[id];
+      if (d < 1 && (!best || d < best.d)) best = { id: id, x: x, y: y, d: d };
+    });
+    return best;
+  }
+  function spInfo() {
+    clearTimeout(spInfoT);
+    spInfoT = setTimeout(function () {
+      var h = spHome();
+      if (!h) { spMsg(sp.z < 13 ? "Zooma in där du vill börja köra." : "Vägarna här hämtas från internet när du trycker på Kör, det kan ta upp till en minut."); return; }
+      if (!homeAreas[h.id]) { spMsg(HOMES[h.id].name + ": du startar direkt."); withHome(h.id, "spawnMsg", spInfo); return; }
+      var s = window.RIKTIG.nearStreet(homeAreas[h.id], h.x, h.y);
+      if (!s) spMsg(HOMES[h.id].name + ": du startar direkt.");
+      else if (s.d > 120) spMsg("Ingen bilväg precis här. Du börjar på närmaste" + (s.name ? ", " + s.name : "") + ", " + Math.round(s.d / 10) * 10 + " m bort.");
+      else spMsg("Du börjar på " + (s.name || "gatan vid nålen") + ".");
+    }, 250);
+  }
+  function spMoved() { spDirty = true; spInfo(); }
+  function spZoom(f, sx, sy) {
+    var z2 = Math.max(4, Math.min(19.5, sp.z + Math.log(f) / Math.LN2));
+    if (sx == null) { sp.z = z2; spMoved(); return; }
+    // Keep the point under the fingers where it is.
+    var c = spWorld(sp.lat, sp.lon, sp.z), px = c.x + (sx - spW / 2), py = c.y + (sy - spH / 2), k = Math.pow(2, z2 - sp.z);
+    var q = spLatLon(px * k - (sx - spW / 2), py * k - (sy - spH / 2), z2);
+    sp.lat = q.lat; sp.lon = q.lon; sp.z = z2; spMoved();
+  }
+  function spPan(dx, dy) {
+    var c = spWorld(sp.lat, sp.lon, sp.z), q = spLatLon(c.x - dx, c.y - dy, sp.z);
+    sp.lat = Math.max(-80, Math.min(80, q.lat)); sp.lon = q.lon; spMoved();
+  }
+  var spPts = {}, spMove = 0;
+  spCv.addEventListener("pointerdown", function (e) { spCv.setPointerCapture(e.pointerId); spPts[e.pointerId] = { x: e.clientX, y: e.clientY }; spMove = 0; document.getElementById("spawnHits").innerHTML = ""; });
+  spCv.addEventListener("pointermove", function (e) {
+    var old = spPts[e.pointerId];
+    if (!old) return;
+    var ids = Object.keys(spPts);
+    if (ids.length === 2) {
+      var o = spPts[ids[0] == e.pointerId ? ids[1] : ids[0]], d0 = Math.hypot(old.x - o.x, old.y - o.y), d1 = Math.hypot(e.clientX - o.x, e.clientY - o.y);
+      if (d0 > 10) spZoom(d1 / d0, (e.clientX + o.x) / 2, (e.clientY + o.y) / 2);
+      spPan((e.clientX - old.x) / 2, (e.clientY - old.y) / 2);
+    } else if (ids.length === 1) spPan(e.clientX - old.x, e.clientY - old.y);
+    spMove += Math.abs(e.clientX - old.x) + Math.abs(e.clientY - old.y);
+    spPts[e.pointerId] = { x: e.clientX, y: e.clientY };
+  });
+  spCv.addEventListener("pointerup", function (e) {
+    var was = spPts[e.pointerId]; delete spPts[e.pointerId];
+    // A tap (no drag) moves the tapped spot under the pin.
+    if (was && spMove < 8 && !Object.keys(spPts).length) spPan(spW / 2 - e.clientX, spH / 2 - e.clientY);
+  });
+  spCv.addEventListener("pointercancel", function (e) { delete spPts[e.pointerId]; });
+  spCv.addEventListener("wheel", function (e) { e.preventDefault(); spZoom(e.deltaY < 0 ? 1.25 : 0.8, e.clientX, e.clientY); }, { passive: false });
+  document.getElementById("spawnIn").addEventListener("click", function () { spZoom(2); });
+  document.getElementById("spawnOut").addEventListener("click", function () { spZoom(0.5); });
+  window.addEventListener("resize", function () { if (spOn) spResize(); });
+  document.getElementById("spawnOpen").addEventListener("click", function () {
+    var s = store.spawn || { lat: HOMES.eskilstuna.lat, lon: HOMES.eskilstuna.lon, z: 15 };
+    sp = { lat: s.lat, lon: s.lon, z: s.z };
+    show("spawnPick"); spOn = true; spResize(); spMsg(""); spInfo(); requestAnimationFrame(spDraw);
+  });
+  function spClose() { spOn = false; buildMenu(); show("menu"); }
+  document.getElementById("spawnBack").addEventListener("click", spClose);
+  document.getElementById("spawnForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = document.getElementById("spawnQ").value.trim(), box = document.getElementById("spawnHits");
+    if (!q) return;
+    document.getElementById("spawnQ").blur(); spMsg("Söker…");
+    window.RIKTIG.search(q).then(function (list) {
+      box.innerHTML = ""; spMsg(list.length ? "" : "Hittade ingen sådan plats.");
+      list.forEach(function (pl) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = pl.name;
+        b.addEventListener("click", function () { box.innerHTML = ""; sp.lat = pl.lat; sp.lon = pl.lon; sp.z = 17; spMoved(); });
+        box.appendChild(b);
+      });
+    }).catch(function () { spMsg("Kunde inte söka. Kolla att du är uppkopplad."); });
+  });
+  document.getElementById("spawnGo").addEventListener("click", function () {
+    if (placeBusy || homeBusy) return;
+    var lat = Math.round(sp.lat * 1e5) / 1e5, lon = Math.round(sp.lon * 1e5) / 1e5, h = spHome(), idx = LESSONS.findIndex(function (L) { return L.real; });
+    store.spawn = { lat: lat, lon: lon, z: Math.round(sp.z * 10) / 10 }; saveStore();
+    if (h) {
+      withHome(h.id, "spawnMsg", function (area) { spOn = false; realArea = area; realDest = null; realAt = { x: h.x, y: h.y }; startLesson(idx); });
+      return;
+    }
+    realIdx = idx;
+    loadPlace({ name: "platsen du valde", lat: lat, lon: lon, pin: true }, spMsg, function () { spOn = false; });
+  });
   document.getElementById("resume").addEventListener("click", function () { G.paused = false; show("game"); });
   document.getElementById("restart").addEventListener("click", function () { startLesson(G.idx); });
   document.getElementById("quit").addEventListener("click", function () { G = null; buildMenu(); show("menu"); });
@@ -3141,7 +3290,7 @@
     { id: "oandlig", icon: "♾️", name: "Oändlig körning", what: "Kör så länge du vill. Nya vägar, korsningar och hus byggs hela tiden. Avsluta i pausen.", endless: true,
       make: function () { return makeEndless(); }, steps: [] },
     { id: "riktig", icon: "🗺️", name: "Riktiga vägar", what: "Kör på riktiga gator där du vill. Välj en plats, så hämtas vägar och hus från kartan.", endless: true, real: true,
-      make: function () { return window.RIKTIG.steps(realArea, { jh: JH, rbArm: RB.arm, dest: realDest }); }, steps: [] },
+      make: function () { return window.RIKTIG.steps(realArea, { jh: JH, rbArm: RB.arm, dest: realDest, at: realAt }); }, steps: [] },
     { id: "stad", icon: "🏙️", name: "Stadskörning", what: "Högerregeln, övergångsställe, stopplikt och trafikljus",
       steps: [
         { type: "road", env: "stad", limit: 50, len: 120, signs: [{ s: 8, speed: 50 }],

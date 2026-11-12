@@ -102,6 +102,23 @@ a { color: var(--accent); }
 .placeform .btn { width: auto; padding: 13px 18px; }
 #placeList .btn { text-align: left; }
 .osm-note { font-size: 12px; }
+/* Start picker: a satellite map moved under a fixed pin in the middle. */
+#spawnPick { position: fixed; inset: 0; z-index: 20; background: #1b2229; touch-action: none; }
+#spawnCv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+#spawnPin { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -26px 0 0 -13px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+  background: var(--accent); border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.6); pointer-events: none; }
+#spawnPin::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #06231a; }
+.spawnTop { position: absolute; left: 0; right: 0; top: 0; display: flex; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 16px 0; }
+.spawnTop .btn { width: 48px; flex: none; margin: 0; padding: 11px 0; font-size: 20px; background: rgba(13,18,23,0.88); }
+#spawnForm { flex: 1; min-width: 0; display: flex; }
+#spawnQ { flex: 1; min-width: 0; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(13,18,23,0.88); color: var(--text); font: inherit; }
+#spawnHits { position: absolute; left: 72px; right: 16px; top: calc(62px + env(safe-area-inset-top)); }
+#spawnHits .btn { text-align: left; margin: 4px 0 0; background: rgba(13,18,23,0.94); }
+.spawnZoom { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; }
+.spawnZoom .btn { width: 48px; margin: 0; padding: 8px 0; font-size: 24px; font-weight: 700; background: rgba(13,18,23,0.88); }
+.spawnBottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: rgba(13,18,23,0.9); }
+.spawnBottom p { margin: 0; color: var(--text); font-size: 15px; min-height: 21px; }
+.spawnCredit { font-size: 10px; color: var(--dim); margin-top: 6px; text-align: right; }
 #street { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(68px + env(safe-area-inset-bottom)); max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 4px 12px; border-radius: 10px; background: #1d4f9c; border: 2px solid #f2f4f6; color: #fff; font-size: 15px; font-weight: 700; pointer-events: none; z-index: 4; }
 /* Small map in the top right corner, turning with the car; a button switches to the satellite image. */
@@ -203,6 +220,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <button id="eskil" class="lesson home" type="button"><span class="num">🏠</span><span class="txt"><span class="name">Kör i Eskilstuna</span><br><span class="what">Hoppa in direkt på Eskilstunas riktiga gator.</span></span></button>
     <button id="skog" class="lesson home" type="button"><span class="num">🏡</span><span class="txt"><span class="name">Kör i Skogstorp</span><br><span class="what">Hoppa in direkt på gatorna hemma i Skogstorp.</span></span></button>
     <button id="eskilGps" class="lesson home" type="button"><span class="num">🧭</span><span class="txt"><span class="name">GPS</span><br><span class="what">Välj en gata i Eskilstuna eller Skogstorp, så visar GPS:en och läraren vägen dit.</span></span></button>
+    <button id="spawnOpen" class="lesson home" type="button"><span class="num">📌</span><span class="txt"><span class="name">Välj startplats</span><br><span class="what">Flytta satellitkartan så nålen står där du vill börja köra.</span></span></button>
     <p id="eskilMsg" role="status"></p>
     <button id="daily" class="lesson daily" type="button"><span class="num">📅</span><span class="txt"><span class="name">Dagens körning</span><br><span class="what dsub"></span></span></button>
     <div id="weak" class="weak" hidden></div>
@@ -263,6 +281,22 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: 
     <div id="gpsList" class="gpslist"></div>
     <button class="btn" id="gpsBack" type="button">Tillbaka</button>
     <p class="osm-note">Kartdata © OpenStreetMap-bidragsgivare</p>
+  </div>
+</div>
+
+<div id="spawnPick" hidden>
+  <canvas id="spawnCv"></canvas>
+  <div id="spawnPin" aria-hidden="true"></div>
+  <div class="spawnTop">
+    <button class="btn" id="spawnBack" type="button" aria-label="Tillbaka">←</button>
+    <form id="spawnForm"><input id="spawnQ" type="search" placeholder="Sök ort eller gata" autocomplete="off" enterkeyhint="search"></form>
+  </div>
+  <div id="spawnHits"></div>
+  <div class="spawnZoom"><button class="btn" id="spawnIn" type="button" aria-label="Zooma in">+</button><button class="btn" id="spawnOut" type="button" aria-label="Zooma ut">−</button></div>
+  <div class="spawnBottom">
+    <p id="spawnMsg" role="status"></p>
+    <button class="btn primary" id="spawnGo" type="button">🚗 Kör härifrån</button>
+    <div class="spawnCredit">Bild © Esri, Maxar · Kartdata © OpenStreetMap-bidragsgivare</div>
   </div>
 </div>
 
