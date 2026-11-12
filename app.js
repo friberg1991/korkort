@@ -12,7 +12,7 @@
   // ---------------------------------------------------------------------
 
   function defaults() {
-    return { boxes: {}, chapter: "all", best: 0, soundOff: false, ttsAuto: false };
+    return { boxes: {}, chapter: "all", best: 0, soundOff: false, ttsAuto: false, onlyWrong: false };
   }
 
   function load() {
@@ -133,8 +133,12 @@
     return list;
   }
 
+  // "Bara fel": the chosen chapter's questions whose last answer was wrong.
+  function wrongPool() { return pool().filter(function (q) { return db.boxes[key(q)] === 0; }); }
+
   function pickQuestion() {
-    var list = pool();
+    var list = db.onlyWrong ? wrongPool() : pool();
+    if (!list.length) list = pool();
     var keep = Math.min(RECENT, list.length - 1);
     var lately = recent.slice(recent.length - keep);
     var total = 0, weights = list.map(function (q) {
@@ -229,17 +233,34 @@
     answers: $("answers"), explain: $("explain"), result: $("result"), why: $("why"),
     stats: $("stats"), next: $("next"), speak: $("speak"), menuBtn: $("menuBtn"),
     sheet: $("sheet"), chapters: $("chapters"), optSound: $("optSound"), optTts: $("optTts"),
-    ttsRow: $("ttsRow"), reset: $("reset"), close: $("close")
+    ttsRow: $("ttsRow"), reset: $("reset"), close: $("close"),
+    optWrong: $("optWrong"), wrongRow: $("wrongRow"), examBtn: $("examBtn"), examDone: $("examDone")
   };
 
   var LETTERS = ["A", "B", "C", "D"];
   var current, answered, lastRight, buttons = [];
   var session = { right: 0, total: 0, streak: 0 };
 
+  // Övningsprov, like the real knowledge test: 65 questions that count, 52 right to pass, 50 minutes.
+  // Null when no test is on; while one is: list, i (index shown), pick (the button chosen, which can
+  // change until "Nästa fråga"), right, wrong ([{ q, picked }]), left (seconds, counted only while the
+  // app is on screen), done, review (index into wrong while going through them).
+  var EXAM_COUNT = 65, EXAM_PASS = 52, EXAM_SECONDS = 50 * 60, EXAM_SIGNS = 10;
+  var exam = null, examTimer = null;
+  function clock(s) { return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+
   function updateStats() {
+    if (exam) {
+      var n = exam.list.length, through = exam.done ? n : exam.i;
+      el.stats.innerHTML = exam.done ? "Övningsprov: " + exam.right + " rätt av " + n
+        : (exam.left <= 300 ? '<span class="no">Tid kvar ' + clock(exam.left) + "</span>" : "Tid kvar " + clock(exam.left));
+      el.fill.style.width = (100 * through / n) + "%";
+      return;
+    }
     var list = pool(), known = 0;
     list.forEach(function (q) { if ((db.boxes[key(q)] || 0) >= KNOWN_BOX) known++; });
-    var html = "Rätt " + session.right + " av " + session.total + " · Kan " + known + " av " + list.length;
+    var html = "Rätt " + session.right + " av " + session.total + " · " +
+      (db.onlyWrong ? "Fel kvar " + wrongPool().length : "Kan " + known + " av " + list.length);
     if (session.streak >= 2) html += ' · <span class="gold">' + session.streak + " i rad</span>";
     if (db.best >= 5) html += "<br>Rekord: " + db.best + " i rad";
     el.stats.innerHTML = html;
@@ -252,7 +273,15 @@
     recent.push(q);
     if (recent.length > RECENT) recent.shift();
 
-    el.chapter.textContent = CHAPTER_NAME[q.ch] || "";
+    if (exam) {
+      el.chapter.textContent = "Övningsprov · fråga " + (exam.i + 1) + " av " + exam.list.length;
+      el.next.textContent = exam.i === exam.list.length - 1 ? "Lämna in" : "Nästa fråga";
+    } else {
+      el.chapter.textContent = (CHAPTER_NAME[q.ch] || "") + (db.onlyWrong ? " · bara fel" : "");
+      el.next.textContent = "Nästa fråga";
+    }
+    el.examDone.hidden = true;
+    el.answers.hidden = false;
     el.question.textContent = q.text;
     if (q.pic) {
       el.pic.src = picUrl(q.pic);
@@ -312,8 +341,39 @@
     setTimeout(function () { t.remove(); }, 2400);
   }
 
+  // In the test a pick shows nothing about right or wrong, and can change until "Nästa fråga".
+  function examPick(picked) {
+    exam.pick = picked;
+    buttons.forEach(function (b) { b.classList.toggle("picked", b === picked); });
+    el.next.hidden = false;
+  }
+
+  // After an answer (or going through a test's wrong ones): marks, why, and the next button.
+  function reveal(picked, right) {
+    buttons.forEach(function (b) {
+      b.disabled = true;
+      b.classList.remove("picked");
+      if (b.isRight) { b.classList.add("right"); b.badge.textContent = "✓"; }
+      else if (b === picked) { b.classList.add("wrong"); b.badge.textContent = "✕"; }
+      else b.classList.add("faded");
+    });
+    el.why.textContent = current.why;
+    el.explain.className = right ? "" : "bad";
+    el.explain.hidden = false;
+    el.next.hidden = false;
+    updateStats();
+    el.explain.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function wrongResult() {
+    el.result.innerHTML = '<span class="no">Fel.</span> ';
+    if (current.pictureAnswers) el.result.appendChild(document.createTextNode("Rätt bild är markerad med grönt."));
+    else el.result.appendChild(document.createTextNode("Rätt svar: " + current.answers[0]));
+  }
+
   function answer(picked) {
     if (answered || !current) return;
+    if (exam) { examPick(picked); return; }
     answered = true;
     var right = picked.isRight, k = key(current), praise = null;
     lastRight = right;
@@ -333,28 +393,11 @@
     session.total++;
     save();
 
-    buttons.forEach(function (b) {
-      b.disabled = true;
-      if (b.isRight) { b.classList.add("right"); b.badge.textContent = "✓"; }
-      else if (b === picked) { b.classList.add("wrong"); b.badge.textContent = "✕"; }
-      else b.classList.add("faded");
-    });
-
     if (right) {
       el.result.innerHTML = '<span class="ok">Rätt!</span>' +
         (session.streak >= 2 ? ' <span class="gold">' + session.streak + " i rad</span>" : "");
-    } else if (current.pictureAnswers) {
-      el.result.innerHTML = '<span class="no">Fel.</span> Rätt bild är markerad med grönt.';
-    } else {
-      el.result.innerHTML = '<span class="no">Fel.</span> Rätt svar: ';
-      el.result.appendChild(document.createTextNode(current.answers[0]));
-    }
-    el.why.textContent = current.why;
-    el.explain.className = right ? "" : "bad";
-    el.explain.hidden = false;
-    el.next.hidden = false;
-    updateStats();
-    el.explain.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else wrongResult();
+    reveal(picked, right);
 
     if (praise) { cheer(praise); SOUND.cheer(); }
     else if (right) SOUND.right();
@@ -380,7 +423,92 @@
     speak(texts);
   }
 
-  function next() { show(pickQuestion()); }
+  function next() {
+    if (db.onlyWrong && !wrongPool().length) { db.onlyWrong = false; save(); cheer("Inga fel kvar!"); }
+    show(pickQuestion());
+  }
+
+  // ---------------------------------------------------------------------
+  // Övningsprov
+  // ---------------------------------------------------------------------
+
+  function endExam() {
+    clearInterval(examTimer); examTimer = null;
+    exam = null;
+    next();
+  }
+
+  // Going through the wrong ones after the test, one at a time, as after a wrong answer.
+  function showReview() {
+    var w = exam.wrong[exam.review];
+    show(w.q);
+    answered = true; lastRight = false;
+    var picked = null;
+    buttons.forEach(function (b) { if (b.answerText === w.picked) picked = b; });
+    wrongResult();
+    el.chapter.textContent = "Övningsprov · fel " + (exam.review + 1) + " av " + exam.wrong.length;
+    el.next.textContent = exam.review < exam.wrong.length - 1 ? "Nästa fel" : "Klar";
+    reveal(picked, false);
+  }
+
+  function examResult(timeUp) {
+    clearInterval(examTimer); examTimer = null;
+    if (synth) synth.cancel();
+    exam.done = true;
+    current = null; answered = true;
+    var n = exam.list.length, passed = exam.right >= EXAM_PASS;
+    el.chapter.textContent = "Övningsprov";
+    el.pic.hidden = true; el.pic.removeAttribute("src");
+    el.answers.hidden = true;
+    el.question.textContent = "Provet är klart.";
+    el.result.innerHTML = passed ? '<span class="ok">Godkänt!</span>' : '<span class="no">Inte godkänt.</span>';
+    el.why.textContent = "Du fick " + exam.right + " rätt av " + n + ". För godkänt krävs " + EXAM_PASS + " rätt." +
+      (timeUp ? " Tiden tog slut, så frågorna du inte hann räknas som fel." : " Tid: " + clock(EXAM_SECONDS - exam.left) + " av " + clock(EXAM_SECONDS) + ".");
+    el.explain.className = passed ? "" : "bad";
+    el.explain.hidden = false;
+    el.next.textContent = exam.wrong.length ? "Gå igenom felen" : "Klar";
+    el.next.hidden = false;
+    el.examDone.hidden = !exam.wrong.length;
+    updateStats();
+    window.scrollTo(0, 0);
+    if (passed) { cheer("Godkänt!"); SOUND.cheer(); }
+  }
+
+  // "Nästa fråga" in the test: the pick counts, and is learnt like any answer.
+  function examNext() {
+    var q = exam.list[exam.i], b = exam.pick, k = key(q);
+    if (b && b.isRight) { exam.right++; db.boxes[k] = Math.min((db.boxes[k] || 0) + 1, WEIGHT.length - 1); }
+    else { db.boxes[k] = 0; exam.wrong.push({ q: q, picked: b ? b.answerText : null }); }
+    save();
+    exam.pick = null;
+    exam.i++;
+    if (exam.i >= exam.list.length) examResult(false); else show(exam.list[exam.i]);
+  }
+
+  // The clock stands still while the app is not on screen.
+  function examTick() {
+    if (!exam || exam.done || document.hidden) return;
+    exam.left--;
+    if (exam.left <= 0) {
+      if (exam.pick) examNext(); // a pick made but not yet sent in still counts
+      if (!exam.done) examResult(true);
+    } else updateStats();
+  }
+
+  // 55 written questions (pictures and situations among them) and 10 sign questions, from every chapter.
+  function startExam() {
+    var written = QUESTIONS.filter(function (q) { return !q.key; }), signs = QUESTIONS.filter(function (q) { return !!q.key; });
+    var list = [];
+    function take(from, n) { for (var i = 0; i < n && from.length; i++) list.push(from.splice(Math.floor(Math.random() * from.length), 1)[0]); }
+    take(written, EXAM_COUNT - EXAM_SIGNS);
+    take(signs, EXAM_SIGNS);
+    for (var i = list.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = list[i]; list[i] = list[j]; list[j] = t; }
+    exam = { list: list, i: 0, right: 0, wrong: [], left: EXAM_SECONDS, pick: null, done: false, review: -1 };
+    clearInterval(examTimer);
+    examTimer = setInterval(examTick, 1000);
+    closeMenu();
+    show(list[0]);
+  }
 
   // ---------------------------------------------------------------------
   // Menu: chapter and settings
@@ -427,6 +555,10 @@
     });
     el.optSound.checked = !db.soundOff;
     el.optTts.checked = !!db.ttsAuto;
+    el.optWrong.checked = !!db.onlyWrong;
+    // During a test the menu only offers the way out, so nothing else changes under it.
+    el.chapters.hidden = el.wrongRow.hidden = !!exam;
+    el.examBtn.textContent = !exam ? "📝 Övningsprov: 65 frågor, 50 min" : exam.done ? "Tillbaka till frågorna" : "Avbryt provet";
   }
 
   function openMenu() { buildMenu(); el.sheet.hidden = false; }
@@ -445,7 +577,21 @@
     closeMenu();
     next();
   });
-  el.next.addEventListener("click", next);
+  el.next.addEventListener("click", function () {
+    if (!exam) next();
+    else if (exam.review >= 0) { if (exam.review < exam.wrong.length - 1) { exam.review++; showReview(); } else endExam(); }
+    else if (exam.done) { if (exam.wrong.length) { exam.review = 0; showReview(); } else endExam(); }
+    else examNext();
+  });
+  el.examDone.addEventListener("click", endExam);
+  el.examBtn.addEventListener("click", function () { if (exam) { closeMenu(); endExam(); } else startExam(); });
+  el.optWrong.addEventListener("change", function () {
+    if (el.optWrong.checked && !wrongPool().length) { el.optWrong.checked = false; closeMenu(); cheer("Inga fel att öva på här"); return; }
+    db.onlyWrong = el.optWrong.checked; save();
+    recent = [];
+    closeMenu();
+    next();
+  });
   el.speak.addEventListener("click", function () {
     if (synth && synth.speaking) synth.cancel(); else speakQuestion();
   });

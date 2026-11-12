@@ -40,14 +40,17 @@
 
 <footer class="bottom">
   <div id="stats"></div>
+  <button id="examDone" class="ghost" type="button" hidden>Klar</button>
   <button id="next" class="primary" type="button" hidden>Nästa fråga</button>
 </footer>
 
 <div id="sheet" class="sheet" hidden>
   <div class="panel" role="dialog" aria-label="Meny">
     <a class="primary wide" href="spel.html" style="display:block;text-align:center;text-decoration:none;margin-bottom:12px">🚗 Övningskör med lärare</a>
+    <button id="examBtn" class="primary wide" type="button" style="margin:0 0 12px">📝 Övningsprov: 65 frågor, 50 min</button>
     <h2>Kapitel</h2>
     <div id="chapters"></div>
+    <label class="row" id="wrongRow"><input type="checkbox" id="optWrong"> Bara frågor jag svarat fel på</label>
     <h2>Inställningar</h2>
     <label class="row"><input type="checkbox" id="optSound"> Ljud vid svar</label>
     <label class="row" id="ttsRow"><input type="checkbox" id="optTts"> Läs upp automatiskt</label>

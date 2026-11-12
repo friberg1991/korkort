@@ -127,6 +127,8 @@ main { max-width: 640px; margin: 0 auto; padding: 16px 16px 140px; }
 .answer.wrong { background: var(--bad); border-color: var(--bad); }
 .answer.wrong .badge { background: var(--bad-dark); color: #fff; }
 .answer.faded { opacity: 0.45; }
+.answer.picked { background: var(--btn-hover); border-color: var(--accent); }
+.answer.picked .badge { background: var(--accent); color: #fff; }
 .answer.right, .answer.wrong { animation: pop 0.25s ease; }
 @keyframes pop { 50% { transform: scale(1.03); } }
 
@@ -163,6 +165,7 @@ main { max-width: 640px; margin: 0 auto; padding: 16px 16px 140px; }
   border-top: 1px solid var(--line);
 }
 #stats { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; line-height: 1.35; }
+#examDone { width: auto; margin-top: 0; min-height: 50px; padding: 0 16px; }
 .primary {
   min-height: 50px;
   padding: 0 22px;
