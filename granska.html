@@ -73,7 +73,8 @@ button, input, textarea { font: inherit; color: inherit; }
 (function () {
   // Kartgranskaren: the game's own map (streets, houses, ground) over the satellite image, to find
   // where the map is wrong. Each spot marked gets a note; the list is copied into the chat.
-  var HOMES = { eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json" }, skogstorp: { name: "Skogstorp", file: "skogstorp.json" } };
+  // `file`: a map packed with the app; without it the streets are fetched (the packed maps are out until rebuilt).
+  var HOMES = { eskilstuna: { name: "Eskilstuna", lat: 59.3712, lon: 16.5094 }, skogstorp: { name: "Skogstorp", lat: 59.32496, lon: 16.48529 } };
   var COL = { grass: "#709c54", asph: "#4c5056", walk: "#c6c2b8", house: "#c9a0a0", roof: "#7d4a3a" };
   var LAND = { forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", water: "#4f86b0", pitch: "#5da94a" };
   var DEG = Math.PI / 180, K = 111320, ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
@@ -95,8 +96,9 @@ button, input, textarea { font: inherit; color: inherit; }
     home = id; store.home = id; save();
     document.querySelectorAll("#bar [data-home]").forEach(function (b) { b.classList.toggle("on", b.dataset.home === id); });
     if (areas[id]) { area = areas[id]; view = { x: 0, y: 0, s: 2 }; dirty = true; return; }
-    info("Laddar " + HOMES[id].name + "…");
-    window.RIKTIG.loadFile(HOMES[id].file).then(function (a) {
+    var Hm = HOMES[id];
+    info(Hm.file ? "Laddar " + Hm.name + "…" : "Hämtar gatorna i " + Hm.name + ", det kan ta upp till en minut…");
+    (Hm.file ? window.RIKTIG.loadFile(Hm.file) : window.RIKTIG.load(Hm.lat, Hm.lon)).then(function (a) {
       areas[id] = area = a; a.home = id;
       a.houseList = []; Object.keys(a.grid).forEach(function (k) { a.grid[k].forEach(function (h) { a.houseList.push(h); }); });
       view = { x: 0, y: 0, s: 2 }; dirty = true;

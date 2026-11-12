@@ -61,7 +61,7 @@
     var ar = "(around:" + R_ROADS + "," + lat + "," + lon + ")", ah = "(around:" + R_HOUSES + "," + lat + "," + lon + ")";
     var q = '[out:json][timeout:90];way["highway"~"^(' + ROADS + ')$"]' + NOT_SERVICE + ar + ";out body qt;node(w);out body qt;" +
       'way["building"]' + ah + ";out geom qt;";
-    return overpass(q).then(function (json) { return makeArea(json, lat, lon); });
+    return overpass(q).then(function (json) { var a = makeArea(json, lat, lon); a.lat0 = lat; a.lon0 = lon; return a; });
   }
 
   // A map packed with the app (verktyg/karta.js makes it): no waiting for the map servers,

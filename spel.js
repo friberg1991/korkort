@@ -3091,10 +3091,13 @@
   document.getElementById("pause").addEventListener("click", pause);
   // ---------- real roads: pick a place ----------
   var realArea = null, realIdx = -1, placeBusy = false, realDest = null, realAt = null;   // realAt: the spot picked on the satellite map
-  // ---------- Eskilstuna and Skogstorp: the maps come with the app, so a drive starts at once ----------
+  // ---------- Eskilstuna and Skogstorp ----------
+  // With `file` set, the map comes with the app (verktyg/karta.js packs it) and a drive starts at once;
+  // without, the streets around the middle are fetched like any other place. The packed maps were taken
+  // out on 2026-11-12 (his word) until road widths, lanes and hills work; they are rebuilt then.
   var HOMES = {
-    eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json", lat: 59.3712, lon: 16.5094 },
-    skogstorp: { name: "Skogstorp", file: "skogstorp.json", lat: 59.32496, lon: 16.48529 }
+    eskilstuna: { name: "Eskilstuna", lat: 59.3712, lon: 16.5094 },
+    skogstorp: { name: "Skogstorp", lat: 59.32496, lon: 16.48529 }
   };
   var homeAreas = {}, homeBusy = false, gpsHome = "eskilstuna";
   function eskMsg(id, t) { document.getElementById(id).textContent = t || ""; }
@@ -3102,11 +3105,11 @@
     if (homeAreas[id]) return then(homeAreas[id]);
     if (homeBusy) return;
     var H = HOMES[id];
-    homeBusy = true; eskMsg(msgId, "Laddar " + H.name + "…");
-    window.RIKTIG.loadFile(H.file).then(function (area) {
+    homeBusy = true; eskMsg(msgId, H.file ? "Laddar " + H.name + "…" : "Hämtar gatorna i " + H.name + ", det kan ta upp till en minut…");
+    (H.file ? window.RIKTIG.loadFile(H.file) : window.RIKTIG.load(H.lat, H.lon)).then(function (area) {
       homeBusy = false; eskMsg(msgId, "");
       area.name = H.name; area.lat = H.lat; area.lon = H.lon; homeAreas[id] = area; then(area);
-    }).catch(function () { homeBusy = false; eskMsg(msgId, "Kunde inte läsa in kartan över " + H.name + ". Försök igen."); });
+    }).catch(function () { homeBusy = false; eskMsg(msgId, H.file ? "Kunde inte läsa in kartan över " + H.name + ". Försök igen." : "Kartservrarna svarar inte just nu. Försök igen om en stund."); });
   }
   function driveHome(id, dest) {
     withHome(id, dest ? "gpsMsg" : "eskilMsg", function (area) {
@@ -3208,7 +3211,7 @@
   });
   document.getElementById("placeBack").addEventListener("click", function () { buildMenu(); show("menu"); });
   // ---------- pick the start on a satellite map ----------
-  // The map moves under a fixed pin in the middle. Inside Eskilstuna's or Skogstorp's packed map the
+  // The map moves under a fixed pin in the middle. Inside a packed map (a HOMES entry with `file`) the
   // drive starts at once on the street nearest the pin; anywhere else the roads are fetched around it.
   var SP_R = { eskilstuna: 3500, skogstorp: 2000 };    // metres from the middle where a packed map has roads all round
   var spCv = document.getElementById("spawnCv"), spCtx = spCv.getContext("2d"), spTiles = {}, spTileN = 0;
@@ -3278,7 +3281,9 @@
   function spHome() {
     var best = null;
     Object.keys(HOMES).forEach(function (id) {
-      var H = HOMES[id], kx = 111320 * Math.cos(H.lat * DEG), x = (sp.lon - H.lon) * kx, y = -(sp.lat - H.lat) * 111320, d = Math.hypot(x, y) / SP_R[id];
+      var H = HOMES[id];
+      if (!H.file) return;
+      var kx = 111320 * Math.cos(H.lat * DEG), x = (sp.lon - H.lon) * kx, y = -(sp.lat - H.lat) * 111320, d = Math.hypot(x, y) / SP_R[id];
       if (d < 1 && (!best || d < best.d)) best = { id: id, x: x, y: y, d: d };
     });
     return best;
