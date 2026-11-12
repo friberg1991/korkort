@@ -385,11 +385,12 @@
     var walk = [], asph = [], r = MAP_R + 150, drv = {};
     G3.course.pieces.forEach(function (pc) { (pc.st.edges || []).forEach(function (i) { drv[i] = true; }); });
     mapPieces = G3.course.pieces.length;
-    A.edges.forEach(function (e) {
-      if (drv[e.i]) return;
-      if (!e.pts.some(function (q) { return Math.abs(q.x - p.x) < r && Math.abs(q.y - p.y) < r; })) return;
+    A.edges.concat(A.lines || []).forEach(function (e) {
+      if (e.i != null && drv[e.i]) return;
+      var P = e.dpts || e.pts;   // as the map has it: a roundabout's ring, and the roads ending at it
+      if (!P.some(function (q) { return Math.abs(q.x - p.x) < r && Math.abs(q.y - p.y) < r; })) return;
       var w = api.roadWidth(e);
-      ribbon(walk, e.pts, w + api.walkWidth(e), -0.07); ribbon(asph, e.pts, w, -0.035);
+      ribbon(walk, P, w + api.walkWidth(e), -0.07); ribbon(asph, P, w, -0.035);
     });
     mapRoads = [flatMesh(walk, api.COL.walk), flatMesh(asph, api.COL.asph)];
     mapRoads.forEach(function (m) { scene.add(m); });

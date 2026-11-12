@@ -221,13 +221,14 @@
     function addEdge(w, ids) {
       var a = vert(ids[0]), b = vert(ids[ids.length - 1]);
       if (a === b) return;
-      var pts = ids.map(function (id) { return nodes[id]; });
+      var pts = ids.map(function (id) { return nodes[id]; }), dpts = a.rb || b.rb ? pts.slice() : null;
       if (a.rb) pts[0] = { x: a.x, y: a.y };
       if (b.rb) pts[pts.length - 1] = { x: b.x, y: b.y };
       var t = w.tags, ow = /^(yes|true|1)$/.test(t.oneway || "") ? 1 : /^(-1|reverse)$/.test(t.oneway || "") ? -1 : 0;
       var hw = t.highway.replace("_link", ""), L = line(pts);
       if (L.len < 0.5) return;
       var e = { a: a, b: b, pts: pts, tags: t, rank: RANK[hw] != null ? RANK[hw] : 1, ow: ow, seen: 0, len: L.len, lf: L, service: hw === "service" };
+      if (dpts) e.dpts = dpts;   // drawn as the map has it: ending at the ring, not at its middle
       e.i = edges.length; edges.push(e); a.edges.push(e); b.edges.push(e);
     }
     ways.forEach(function (w) {
@@ -237,9 +238,16 @@
         if (i === ids.length - 1 || use[ids[i]] >= 2 || rbOf[ids[i]]) { addEdge(w, ids.slice(from, i + 1)); from = i; }
       }
     });
+    // A roundabout's ring, only to be drawn (the drive's graph has it as one point).
+    var lines = [];
+    ways.forEach(function (w) {
+      if (!w.rb) return;
+      var pts = w.nodes.filter(function (id) { return nodes[id]; }).map(function (id) { return nodes[id]; }), hw = w.tags.highway.replace("_link", "");
+      if (pts.length > 1) lines.push({ pts: pts, tags: w.tags, rank: RANK[hw] != null ? RANK[hw] : 1, ring: true });
+    });
     var grid = {};
     houses.forEach(function (h) { var k = Math.floor(h.cx / 60) + "," + Math.floor(h.cy / 60); (grid[k] = grid[k] || []).push(h); });
-    return { ok: edges.some(function (e) { return e.rank >= 1 && e.len > 50; }), verts: verts, edges: edges, grid: grid, houses: houses.length };
+    return { ok: edges.some(function (e) { return e.rank >= 1 && e.len > 50; }), verts: verts, edges: edges, lines: lines, grid: grid, houses: houses.length };
   }
   function makeHouse(e, P) {
     if (e.tags.building === "roof") return null;

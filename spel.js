@@ -245,7 +245,7 @@
   // road would run over are left out.
   function mapArea() { return G && G.lesson.real && realArea && realArea.grid ? realArea : null; }
   function edgeBox(e) {
-    if (!e.bb) { var b = [1e9, 1e9, -1e9, -1e9]; e.pts.forEach(function (q) { b[0] = Math.min(b[0], q.x); b[1] = Math.min(b[1], q.y); b[2] = Math.max(b[2], q.x); b[3] = Math.max(b[3], q.y); }); e.bb = b; }
+    if (!e.bb) { var b = [1e9, 1e9, -1e9, -1e9]; (e.dpts || e.pts).forEach(function (q) { b[0] = Math.min(b[0], q.x); b[1] = Math.min(b[1], q.y); b[2] = Math.max(b[2], q.x); b[3] = Math.max(b[3], q.y); }); e.bb = b; }
     return e.bb;
   }
   // The real streets the game's road already lays (it may lie a little beside the map's line just
@@ -257,7 +257,7 @@
   }
   function mapEdgesNear(A, x, y, r, all) {
     var drv = all ? {} : mapDriven();
-    return A.edges.filter(function (e) { var b = edgeBox(e); return !drv[e.i] && b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; });
+    return (A.allE || (A.allE = A.edges.concat(A.lines || []))).filter(function (e) { var b = edgeBox(e); return !(e.i != null && drv[e.i]) && b[2] > x - r && b[0] < x + r && b[3] > y - r && b[1] < y + r; });
   }
   function mapHousesNear(A, x, y, r, all) {
     var out = [], gx0 = Math.floor((x - r) / 60), gx1 = Math.floor((x + r) / 60), gy0 = Math.floor((y - r) / 60), gy1 = Math.floor((y + r) / 60);
@@ -290,10 +290,10 @@
   function segGrid(A) {
     if (A.segs) return A.segs;
     var g = A.segs = {};
-    A.edges.forEach(function (e) {
-      var w = mapRoadWidth(e) / 2 + mapWalk(e) / 2;
-      for (var i = 1; i < e.pts.length; i++) {
-        var a = e.pts[i - 1], b = e.pts[i], sg = { a: a, b: b, w: w };
+    A.edges.concat(A.lines || []).forEach(function (e) {
+      var w = mapRoadWidth(e) / 2 + mapWalk(e) / 2, P = e.dpts || e.pts;
+      for (var i = 1; i < P.length; i++) {
+        var a = P[i - 1], b = P[i], sg = { a: a, b: b, w: w };
         var x0 = Math.floor((Math.min(a.x, b.x) - 10) / 60), x1 = Math.floor((Math.max(a.x, b.x) + 10) / 60);
         var y0 = Math.floor((Math.min(a.y, b.y) - 10) / 60), y1 = Math.floor((Math.max(a.y, b.y) + 10) / 60);
         for (var gx = x0; gx <= x1; gx++) for (var gy = y0; gy <= y1; gy++) (g[gx + "," + gy] = g[gx + "," + gy] || []).push(sg);
@@ -376,7 +376,7 @@
       ctx.strokeStyle = pass[0];
       es.forEach(function (e) {
         ctx.lineWidth = mapRoadWidth(e) + pass[1] * mapWalk(e); ctx.beginPath();
-        e.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
+        (e.dpts || e.pts).forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
         ctx.stroke();
       });
     });
