@@ -2201,8 +2201,38 @@
     ctx.lineCap = "butt"; ctx.lineJoin = "miter";
     return true;
   }
+  // Lines at a real crossing: the map's streets meet at their real angles, so the stop lines and give-way
+  // teeth go across each street where it really comes in, not where a square crossing's arm would be.
+  function drawRealMarks(pc) {
+    var A = mapArea(), v = A && pc.st.real && A.verts[pc.st.real.key];
+    if (!v) return false;
+    var C = pc.C, hx = Math.sin(C.a), hy = -Math.cos(C.a), dirs = [], drv = mapDriven(), next = pc.course.pieces[pc.index + 1];
+    // The road in is the game's own (arm 270); every other street by its direction out of the crossing.
+    dirs.push({ x: -hx, y: -hy, a: 270 });
+    var add = function (dx, dy) {
+      var l = Math.hypot(dx, dy); if (l < 1) return;
+      dx /= l; dy /= l;
+      var along = dx * hx + dy * hy;   // 1 straight on, 0 to the side
+      dirs.push({ x: dx, y: dy, a: along > Math.cos(50 * DEG) ? 90 : 0 });
+    };
+    if (next && next.at && next.kind === "road") { var q = next.at(-1.75, 8); add(q.x - C.x, q.y - C.y); }
+    v.edges.forEach(function (e) { if (drv[e.i]) return; var pts = edgeFrom(e, v, 10), q = pts[pts.length - 1]; add(q.x - v.x, q.y - v.y); });
+    ctx.fillStyle = COL.paint;
+    dirs.forEach(function (d) {
+      var kind = entryLine(pc, d.a);
+      if (!kind) return;
+      // Across the lane coming in: a driver heading back along -d has the lane on his right of -d.
+      var rx = d.y, ry = -d.x, r0 = d.a === 270 ? JH : HW + 1.2;
+      var P = function (r, u) { return { x: C.x + d.x * r + rx * u, y: C.y + d.y * r + ry * u }; };
+      var poly = function (pts) { ctx.beginPath(); pts.forEach(function (p, i) { if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); }); ctx.closePath(); ctx.fill(); };
+      if (kind === "stop") poly([P(r0, 0), P(r0, HW - 0.3), P(r0 + 0.5, HW - 0.3), P(r0 + 0.5, 0)]);
+      else for (var u = 0.2; u < HW - 0.6; u += 0.9) poly([P(r0 + 0.2, u), P(r0 + 0.2, u + 0.6), P(r0 + 1.2, u + 0.3)]);
+    });
+    return true;
+  }
   function drawJunction(pc, pass) {
     if (pc.st.real && pass < 2 && drawRealCrossing(pc, pass)) return;
+    if (pc.st.real && pass === 2 && drawRealMarks(pc)) return;
     var ARM = armLen(pc);
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad", verge = stad ? COL.walk : COL.grass;
