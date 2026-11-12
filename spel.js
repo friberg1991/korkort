@@ -3149,7 +3149,7 @@
   // out on 2026-11-12 (his word) until road widths, lanes and hills work; they are rebuilt then.
   var HOMES = {
     eskilstuna: { name: "Eskilstuna", lat: 59.3712, lon: 16.5094 },
-    skogstorp: { name: "Skogstorp", lat: 59.32496, lon: 16.48529 }
+    skogstorp: { name: "Skogstorp", file: "skogstorp.json", lat: 59.32496, lon: 16.48529 }
   };
   var homeAreas = {}, homeBusy = false, gpsHome = "eskilstuna";
   function eskMsg(id, t) { document.getElementById(id).textContent = t || ""; }

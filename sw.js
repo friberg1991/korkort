@@ -1,6 +1,6 @@
 // Keeps every file of the app on the phone, so it works without internet.
 // Change VERSION on every change, or phones keep the old files; a new file the app needs goes in FILES.
-var VERSION = "korkort-20261112u";
+var VERSION = "korkort-20261112v";
 var FILES = [
   "./",
   "app.js",
@@ -409,6 +409,7 @@ var FILES = [
   "spel.js",
   "granska.html",
   "spel3d.js",
+  "skogstorp.json",
   "style.css",
   "three.min.js"
 ];

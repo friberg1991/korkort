@@ -1,6 +1,7 @@
 // Gör eskilstuna.json och skogstorp.json: vägar och hus från OpenStreetMap, packade så att spelet
-// kan starta direkt och utan internet. Kör: node verktyg/karta.js [skogstorp]
-// Kartdata © OpenStreetMap-bidragsgivare (ODbL).
+// kan starta direkt och utan internet, och markens höjder från Open-Meteo (backarna). Kör:
+// node verktyg/karta.js [skogstorp]
+// Kartdata © OpenStreetMap-bidragsgivare (ODbL). Höjder: Copernicus DEM via Open-Meteo.
 "use strict";
 const fs = require("fs"), path = require("path");
 // Houses, ground and trees as far out as the roads go, so the edge of town is not bare.
@@ -104,8 +105,27 @@ function tagsOf(t) { if (!t) return null; const o = {}; let any = false; KEEP.fo
       out.b.push([e.id, parseFloat(e.tags["building:levels"]) || 0, g]);
     } else if (e.type === "way" && e.tags && e.tags.highway) out.w.push([e.id, e.nodes, tagsOf(e.tags)]);
   });
+  // Hills: the ground's height every 120 m as far out as the roads (riktig.js H_STEP and heights()),
+  // 100 points a call, one at a time; Open-Meteo counts such a call as 10 of its 600 a minute, so on
+  // a 429 it waits a minute. Rows north to south, west to east; raw, riktig.js smooths them.
+  const HS = 120, HR = R_ROADS + 100, HN = Math.ceil(2 * HR / HS) + 1, K = 111320, KX = K * Math.cos(LAT * Math.PI / 180), hpts = [];
+  for (let j = 0; j < HN; j++) for (let i = 0; i < HN; i++) hpts.push([LAT - (-HR + j * HS) / K, LON + (-HR + i * HS) / KX]);
+  const hs = [];
+  for (let b = 0; b < hpts.length; b += 100) {
+    const part = hpts.slice(b, b + 100);
+    const url = "https://api.open-meteo.com/v1/elevation?latitude=" + part.map(q => q[0].toFixed(5)).join(",") + "&longitude=" + part.map(q => q[1].toFixed(5)).join(",");
+    for (let tries = 0; ; tries++) {
+      const res = await fetch(url).catch(() => null);
+      if (res && res.ok) { (await res.json()).elevation.forEach(h => hs.push(Math.round(h * 10) / 10)); break; }
+      if (tries >= 5) throw new Error("höjder: inget svar");
+      console.log("höjder:", res ? res.status : "inget svar", "- väntar en minut");
+      await new Promise(ok => setTimeout(ok, 60000));
+    }
+  }
+  out.hg = { r: HR, step: HS, n: HN, h: hs };
+  console.log("höjder klara:", hs.length, "punkter,", Math.min(...hs), "till", Math.max(...hs), "m");
   const file = path.join(__dirname, "..", NAME + ".json");
-  if (ONLY_LAND) { const old = JSON.parse(fs.readFileSync(file, "utf8")); out.n = old.n; out.w = old.w; out.b = old.b; }
+  if (ONLY_LAND) { const old = JSON.parse(fs.readFileSync(file, "utf8")); out.n = old.n; out.w = old.w; out.b = old.b; out.hg = old.hg || out.hg; }
   fs.writeFileSync(file, JSON.stringify(out));
   console.log(file, (fs.statSync(file).size / 1e6).toFixed(2) + " MB", out.w.length + " vägar", out.b.length + " hus", out.a.length + " ytor", out.t.length / 2 + " träd");
 })().catch(e => { console.error(e); process.exit(1); });

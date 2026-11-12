@@ -1293,9 +1293,13 @@
     beam.intensity = night ? (p.high ? 900 : 380) : 0; beam.distance = p.high ? 130 : 60; beam.angle = p.high ? 0.42 : 0.5;
     beam.target.position.y = p.high ? -0.9 : -1.6;
     drawCluster(Math.round(p.v * 3.6), G.limit || pc.limit, p.blink, Math.floor(G.t * 2.6) % 2 === 0, night && p.high);
+    // With hills on, three.js would leave out what it thinks is out of view from where things sit before
+    // the shader lifts them (the cockpit, 10 m up a hill, counted as below the eye), so nothing is left out.
+    if (hU.hOn.value) scene.traverse(noCull);
     renderMirrors(p, camA);
     renderer.render(scene, camera);
   }
+  function noCull(o) { o.frustumCulled = false; }
 
   window.SPEL3D = {
     ready: function () { if (!renderer && !failed) init(); return !failed; },

@@ -83,24 +83,7 @@
     var K = 111320, kx = K * Math.cos(lat0 * DEG), n = Math.ceil(2 * R / H_STEP) + 1, pts = [], i, j;
     for (j = 0; j < n; j++) for (i = 0; i < n; i++) pts.push([lat0 - (-R + j * H_STEP) / K, lon0 + (-R + i * H_STEP) / kx]);
     var out = new Float32Array(pts.length), starts = [], next = 0, key = "korkort-h:" + lat0.toFixed(4) + "," + lon0.toFixed(4) + "," + R;
-    var done = function (raw) {
-      out.set(raw);
-      for (var pass = 0; pass < 1; pass++) {
-        var src = out.slice();
-        for (j = 0; j < n; j++) for (i = 0; i < n; i++) {
-          var sum = 0, c = 0;
-          for (var dj = -1; dj <= 1; dj++) for (var di = -1; di <= 1; di++) {
-            var ii = i + di, jj = j + dj;
-            if (ii >= 0 && jj >= 0 && ii < n && jj < n) { sum += src[jj * n + ii]; c++; }
-          }
-          out[j * n + i] = sum / c;
-        }
-      }
-      var g = { x0: -R, y0: -R, step: H_STEP, n: n, h: out };
-      var mid = hAt(g, 0, 0);
-      for (i = 0; i < out.length; i++) out[i] -= mid;
-      return g;
-    };
+    var done = function (raw) { return gridOf(raw, n, R, H_STEP); };
     try { var kept = JSON.parse(localStorage.getItem(key) || "null"); if (kept && kept.length === pts.length) return Promise.resolve(done(kept)); } catch (e) {}
     for (i = 0; i < pts.length; i += 100) starts.push(i);
     function one(tries) {
@@ -118,6 +101,24 @@
       try { localStorage.setItem(key, JSON.stringify(Array.prototype.map.call(out, function (h) { return Math.round(h * 10) / 10; }))); } catch (e) {}
       return done(out.slice());
     });
+  }
+  // Raw heights (n by n, rows north to south, R metres out from the middle) into the game's grid:
+  // smoothed once and taken from the middle's height. A packed map (verktyg/karta.js) keeps them raw.
+  function gridOf(raw, n, R, step) {
+    var out = new Float32Array(raw), i, j;
+    var src = out.slice();
+    for (j = 0; j < n; j++) for (i = 0; i < n; i++) {
+      var sum = 0, c = 0;
+      for (var dj = -1; dj <= 1; dj++) for (var di = -1; di <= 1; di++) {
+        var ii = i + di, jj = j + dj;
+        if (ii >= 0 && jj >= 0 && ii < n && jj < n) { sum += src[jj * n + ii]; c++; }
+      }
+      out[j * n + i] = sum / c;
+    }
+    var g = { x0: -R, y0: -R, step: step, n: n, h: out };
+    var mid = hAt(g, 0, 0);
+    for (i = 0; i < out.length; i++) out[i] -= mid;
+    return g;
   }
   // The height at game metres (x, y), bilinear between the grid points, the grid's edge beyond it.
   function hAt(g, x, y) {
@@ -141,6 +142,9 @@
       });
       var area = makeArea({ elements: el }, m.lat, m.lon);
       area.rRoads = m.rRoads; area.rDrive = m.rRoads - 400; area.lat0 = m.lat; area.lon0 = m.lon;
+      // Hills: packed with the map (hg: r, step, n, raw heights), else asked for like a fetched place's.
+      if (m.hg) area.hg = gridOf(m.hg.h, m.hg.n, m.hg.r, m.hg.step);
+      else heights(m.lat, m.lon, m.rRoads + 100).then(function (g) { area.hg = g; }).catch(function () {});
       // Ground: forest, water, pitches, parks and fields, in the game's metres.
       var K = 111320, kx = K * Math.cos(m.lat * DEG);
       area.lands = (m.a || []).map(function (x) {
