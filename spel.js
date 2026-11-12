@@ -78,19 +78,28 @@
   // Roundabout path from arm ain to arm aout (degrees), traffic going anticlockwise as seen from above.
   function laneIn(a, t) { return { x: t * Math.cos(a * DEG) - 1.75 * Math.sin(a * DEG), y: t * Math.sin(a * DEG) + 1.75 * Math.cos(a * DEG) }; }
   function laneOut(a, t) { return { x: t * Math.cos(a * DEG) + 1.75 * Math.sin(a * DEG), y: t * Math.sin(a * DEG) - 1.75 * Math.cos(a * DEG) }; }
-  function ringAt(th) { return { x: RB.path * Math.cos(th * DEG), y: RB.path * Math.sin(th * DEG) }; }
-  function roundLocal(ain, thEnd, aout, lead, tail) {
-    var th0 = ain + 30;
-    var pts = [laneIn(ain, RB.arm + lead), laneIn(ain, 17)];
-    pts = pts.concat(bez(laneIn(ain, 17), laneIn(ain, 11), ringAt(th0), 5));
-    pts = pts.concat(arcPts(0, 0, RB.path, th0, thEnd, 5));
+  // g: the roundabout's size (RB, or a real one's from the map: rbGeom). off: the angle the way in and
+  // out take to join the ring, the same length of curve whatever the size.
+  function rbGeom(st) {
+    if (!st || !st.rb) return RB;
+    var path = st.rb.path;
+    return { path: path, outer: path + 3.25, island: Math.max(2, path - 3.25), arm: st.rb.arm, off: 30 * RB.path / path };
+  }
+  function rbOff(g) { return g.off || 30; }
+  function ringAt(th, g) { g = g || RB; return { x: g.path * Math.cos(th * DEG), y: g.path * Math.sin(th * DEG) }; }
+  function roundLocal(ain, thEnd, aout, lead, tail, g) {
+    g = g || RB;
+    var off = rbOff(g), th0 = ain + off, o3 = g.outer + 3, p0 = g.path + 0.25;
+    var pts = [laneIn(ain, g.arm + lead), laneIn(ain, o3)];
+    pts = pts.concat(bez(laneIn(ain, o3), laneIn(ain, p0), ringAt(th0, g), 5));
+    pts = pts.concat(arcPts(0, 0, g.path, th0, thEnd, Math.min(5, 5 * RB.path / g.path)));
     if (aout !== null) {
-      pts = pts.concat(bez(ringAt(thEnd), laneOut(aout, 11), laneOut(aout, 17), 5));
-      pts.push(laneOut(aout, 17), laneOut(aout, RB.arm + tail));
+      pts = pts.concat(bez(ringAt(thEnd, g), laneOut(aout, p0), laneOut(aout, o3), 5));
+      pts.push(laneOut(aout, o3), laneOut(aout, g.arm + tail));
     }
     return pts;
   }
-  function ringEnd(ain, aout) { var th = aout - 30; while (th <= ain + 30) th += 360; return th; }
+  function ringEnd(ain, aout, g) { var off = rbOff(g || RB), th = aout - off; while (th <= ain + off) th += 360; return th; }
 
   // ---------- the course ----------
   function Course(steps, game) {
@@ -453,10 +462,10 @@
         for (r = 0; r <= JH + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
       });
     } else if (q.kind === "round") {
-      [0, 90, 180, 270].forEach(function (al) {
-        for (r = 0; r <= RB.arm + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
-        for (r = 0; r < 8; r++) out.push(toG(q.C, Math.cos((al + r * 11) * DEG) * RB.outer, Math.sin((al + r * 11) * DEG) * RB.outer));
+      q.armList.concat([270]).forEach(function (al) {
+        for (r = 0; r <= q.g.arm + (al === 270 ? 0 : ARM); r += 3) out.push(toG(q.C, Math.cos(al * DEG) * r, Math.sin(al * DEG) * r));
       });
+      for (r = 0; r < 36; r++) out.push(toG(q.C, Math.cos(r * 10 * DEG) * q.g.outer, Math.sin(r * 10 * DEG) * q.g.outer));
     }
     return out;
   }
@@ -519,25 +528,31 @@
     var pc = basePiece(st, course, "round");
     pc.open = true;
     pc.want = st.want || 2;
-    pc.C = (function () { var q = toG(pc.P, -1.75, RB.arm); return { x: q.x, y: q.y, a: pc.P.a }; })();
-    var th0 = 300;
+    var g = pc.g = rbGeom(st);
+    pc.C = (function () { var q = toG(pc.P, -1.75, g.arm); return { x: q.x, y: q.y, a: pc.P.a }; })();
+    var th0 = 270 + rbOff(g);
+    // The exits in the order they come (a real roundabout's from the map, else right, ahead, left), then
+    // the way back. Exit k is the k-th; past the last the count goes on round the second lap.
+    pc.armList = st.rb ? st.rb.exits.slice() : [0, 90, 180];
+    if (!st.rb || st.rb.back) pc.armList.push(270);
+    pc.nExits = pc.armList.length;
     // Before an exit is chosen the path goes round twice.
-    pc.loop = polyG(pc.C, roundLocal(270, th0 + 720, null, 0, 0));
+    pc.loop = polyG(pc.C, roundLocal(270, th0 + 720, null, 0, 0, g));
     pc.poly = pc.loop; pc.len = pc.loop.len;
-    pc.joinT = new Poly(roundLocal(270, th0 + 1, null, 0, 0)).len;
+    pc.joinT = new Poly(roundLocal(270, th0 + 1, null, 0, 0, g)).len;
     pc.exitAt = [];
-    for (var k = 1; k <= 7; k++) {
-      var a = (270 + 90 * k) % 360, th = a - 30;
+    for (var k = 1; k < pc.nExits * 2; k++) {
+      var a = pc.armList[(k - 1) % pc.nExits], th = a - rbOff(g);
       while (th <= th0) th += 360;
-      if (k > 4) th += 360;
-      pc.exitAt.push({ k: k, a: a, th: th, t: new Poly(roundLocal(270, th, null, 0, 0)).len });
+      if (k > pc.nExits) th += 360;
+      pc.exitAt.push({ k: k, a: a, th: th, t: new Poly(roundLocal(270, th, null, 0, 0, g)).len });
     }
     pc.npcs = []; pc.spawned = false;
     pc.poseAt = function (t) { return pc.poly.at(t); };
     pc.endPose = function () { return pc.poly.at(pc.poly.len); };
     if (st.turn) return pc;   // a turning circle at the end of a street (real roads): no signs
-    course.addSign(pc.s0 + RB.arm - 18, { code: "B1" }, pc.env);
-    course.addSign(pc.s0 + RB.arm - 18, { code: "D3", u: (pc.env === "stad" ? 3.3 : 4.4) + 2.4 }, pc.env);
+    course.addSign(pc.s0 + g.arm - 18, { code: "B1" }, pc.env);
+    course.addSign(pc.s0 + g.arm - 18, { code: "D3", u: (pc.env === "stad" ? 3.3 : 4.4) + 2.4 }, pc.env);
     return pc;
   }
 
@@ -1158,7 +1173,7 @@
     if (pend && pend.kind === "junction") manualJunction(pend);
     else if (pend && pend.kind === "round") manualRound(pend);
     var pc = curPiece();
-    if (pc.kind === "round" && Math.hypot(p.x - pc.C.x, p.y - pc.C.y) < RB.island + 0.45) return crash("Du körde upp på mitten av cirkulationsplatsen!");
+    if (pc.kind === "round" && Math.hypot(p.x - pc.C.x, p.y - pc.C.y) < pc.g.island + 0.45) return crash("Du körde upp på mitten av cirkulationsplatsen!");
     if (pc.kind !== "road" && pc.kind !== "mv") { G.lane = null; return; }
     // Off the road, onto the pavement or into the barrier.
     var t = p.s - pc.s0, st = pc.st, prev = course.pieces[pc.index - 1];
@@ -1219,16 +1234,18 @@
     var p = G.p, t = p.s - pc.s0;
     if (t < pc.joinT + 4) return;
     var L = localTo(pc.C), r = Math.hypot(L.u, L.w);
-    if (r < RB.outer + 2.5) return;
-    var ang = (Math.atan2(L.w, L.u) / DEG + 360) % 360, arm = Math.round(ang / 90) * 90 % 360;
-    if (Math.abs(angDiff(ang * DEG, arm * DEG)) > 28 * DEG) return crash("Du körde av vägen!");
+    if (r < pc.g.outer + 2.5) return;
+    // The exit nearest the way the car left.
+    var ang = Math.atan2(L.w, L.u), arm = null, bd = 9;
+    pc.armList.forEach(function (a) { var d = Math.abs(angDiff(ang, a * DEG)); if (d < bd) { bd = d; arm = a; } });
+    if (arm === null || bd > 28 * DEG) return crash("Du körde av vägen!");
     var cand = pc.exitAt.filter(function (ex) { return ex.a === arm && ex.t <= t + 25; });
     var ex = cand.length ? cand[cand.length - 1] : pc.exitAt.filter(function (e) { return e.a === arm; })[0];
-    var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
+    var k = ((ex.k - 1) % pc.nExits) + 1; pc.exitK = k;
     if (pc.st.turn && k !== 4) return crash("Du körde av vägen!");
     if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
     if (p.blink !== 1 && !pc.st.turn) fault("blink:" + pc.index, "Blinka höger innan du kör ut ur cirkulationsplatsen.", false);
-    pc.poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0)); pc.len = pc.poly.len; pc.open = false;
+    pc.poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0, pc.g)); pc.len = pc.poly.len; pc.open = false;
     p.blink = 0;
     G.course.close(pc);
     p.s = project(pc.s0 + ex.t + 12); p.d = sideOf(p.s); G.prevS = p.s; G.lane = null;
@@ -1705,9 +1722,9 @@
     if (!pc.spawned && t > -70) {
       pc.spawned = true; pc.faultsAt = G.faults.length;
       (st.npcs || []).forEach(function (sp) {
-        var ain = armOf(sp.from), aout = sp.to === "back" ? 270 : armOf(sp.to);
-        var lead = 60, th = ringEnd(ain, aout);
-        var poly = polyG(pc.C, roundLocal(ain, th, aout, lead, 80));
+        var ain = sp.fromA != null ? sp.fromA : armOf(sp.from), aout = sp.toA != null ? sp.toA : sp.to === "back" ? 270 : armOf(sp.to);
+        var lead = 60, th = ringEnd(ain, aout, pc.g);
+        var poly = polyG(pc.C, roundLocal(ain, th, aout, lead, 80, pc.g));
         var vt = 25 / KMH;
         var tc = conflictT(poly, [pc.poly.at(pc.joinT)], 0);
         var eta = Math.max(1.5, (pc.joinT - t) / Math.max(p.v, 6)) * (sp.eta || 1);
@@ -1716,7 +1733,7 @@
         G.npcs.push(car); pc.npcs.push(car);
       });
     }
-    if (crossedFront(pc.s0 + RB.arm - RB.outer - 0.5)) {
+    if (crossedFront(pc.s0 + pc.g.arm - pc.g.outer - 0.5)) {
       pc.npcs.forEach(function (n) {
         if (n.gone || n.tConf < 0) return;
         var togo = n.tConf - n.t;
@@ -1729,9 +1746,9 @@
         var ex = pc.exitAt[i];
         var last = i === pc.exitAt.length - 1;
         if (crossed(pc.s0 + ex.t - 6) && (pc.st.turn ? ex.k === 4 : p.blink === 1 || last)) {
-          var poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0));
+          var poly = polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 0, pc.g));
           pc.poly = poly; pc.len = poly.len; pc.open = false;
-          var k = ((ex.k - 1) % 4) + 1; pc.exitK = k;
+          var k = ((ex.k - 1) % pc.nExits) + 1; pc.exitK = k;
           if (k !== pc.want) fault("route:" + pc.index, "Fel avfart. Vi skulle ta avfart nummer " + pc.want + ".", false);
           if (p.blinkS > pc.s0 + ex.t - 14 && !last && !pc.st.turn) fault("blink:" + pc.index, "Blinka höger lite tidigare innan du kör ut.", false);
           p.blink = 0;
@@ -2314,35 +2331,36 @@
   }
 
   function drawRound(pc, pass) {
-    var ARM = armLen(pc);
+    var ARM = armLen(pc), g = pc.g;
     if (pc.st.real && pc.st.turn) {
       if (pass === 1) {
         ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
-        disc(COL.asph, 0, 0, RB.path + 2.2);
-        rect(COL.asph, -HW, HW, -RB.arm, 0);
+        disc(COL.asph, 0, 0, g.path + 2.2);
+        rect(COL.asph, -HW, HW, -g.arm, 0);
         ctx.restore();
       }
       return;
     }
     ctx.save(); ctx.translate(pc.C.x, pc.C.y); ctx.rotate(pc.C.a);
     var stad = pc.env === "stad";
-    var arms = pc.st.turn ? [270] : [270, 0, 90, 180];
+    var arms = pc.st.turn ? [270] : [270].concat(pc.armList.filter(function (a) { return a !== 270; }));
     if (pass === 0) {
-      if (stad) { disc(COL.walk, 0, 0, RB.outer + 2.6); arms.forEach(function (a) { ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.walk, -HW - 2.6, HW + 2.6, -RB.arm - (a === 270 ? 0 : ARM), -RB.outer + 2); ctx.restore(); }); }
+      if (stad) { disc(COL.walk, 0, 0, g.outer + 2.6); arms.forEach(function (a) { ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.walk, -HW - 2.6, HW + 2.6, -g.arm - (a === 270 ? 0 : ARM), -g.outer + 2); ctx.restore(); }); }
     } else if (pass === 1) {
-      disc(COL.asph, 0, 0, RB.outer);
-      arms.forEach(function (a) { ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.asph, -HW, HW, -RB.arm - (a === 270 ? 0 : ARM), -RB.outer + 3); ctx.restore(); });
-      disc(COL.curb, 0, 0, RB.island + 0.5); disc(COL.grass, 0, 0, RB.island);
-      disc(COL.tree, 1.2, -0.8, 2.8); disc(COL.treeLight, 0.6, -1.4, 1.5);
+      disc(COL.asph, 0, 0, g.outer);
+      arms.forEach(function (a) { ctx.save(); ctx.rotate((270 - a) * DEG); rect(COL.asph, -HW, HW, -g.arm - (a === 270 ? 0 : ARM), -g.outer + 3); ctx.restore(); });
+      disc(COL.curb, 0, 0, g.island + 0.5); disc(COL.grass, 0, 0, g.island);
+      var tk = Math.min(1, g.island / 7.5);
+      disc(COL.tree, 1.2 * tk, -0.8 * tk, 2.8 * tk); disc(COL.treeLight, 0.6 * tk, -1.4 * tk, 1.5 * tk);
     } else {
       arms.forEach(function (a) {
         ctx.save(); ctx.rotate((270 - a) * DEG);
-        dashes(0, -RB.arm - (a === 270 ? 0 : ARM), -RB.outer - 8, 3, stad ? 3 : 9, 0.12, 0);
+        dashes(0, -g.arm - (a === 270 ? 0 : ARM), -g.outer - 8, 3, stad ? 3 : 9, 0.12, 0);
         if (pc.st.turn) { ctx.restore(); return; }
         // splitter island and give-way teeth
-        ctx.fillStyle = COL.walk; ctx.beginPath(); ctx.moveTo(-0.15, RB.outer + 0.5); ctx.lineTo(0.15, RB.outer + 0.5); ctx.lineTo(0.7, RB.outer + 8); ctx.lineTo(-0.7, RB.outer + 8); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = COL.walk; ctx.beginPath(); ctx.moveTo(-0.15, g.outer + 0.5); ctx.lineTo(0.15, g.outer + 0.5); ctx.lineTo(0.7, g.outer + 8); ctx.lineTo(-0.7, g.outer + 8); ctx.closePath(); ctx.fill();
         ctx.fillStyle = COL.paint;
-        for (var u = 0.9; u < HW - 0.4; u += 0.9) { ctx.beginPath(); ctx.moveTo(u, RB.outer + 0.6); ctx.lineTo(u + 0.6, RB.outer + 0.6); ctx.lineTo(u + 0.3, RB.outer + 1.6); ctx.closePath(); ctx.fill(); }
+        for (var u = 0.9; u < HW - 0.4; u += 0.9) { ctx.beginPath(); ctx.moveTo(u, g.outer + 0.6); ctx.lineTo(u + 0.6, g.outer + 0.6); ctx.lineTo(u + 0.3, g.outer + 1.6); ctx.closePath(); ctx.fill(); }
         ctx.restore();
       });
     }
@@ -3589,7 +3607,7 @@
     run: function (dt, n) { for (var i = 0; i < n && G && !G.over; i++) update(dt); },
     draw: function () { draw(); },
     api: { paint: paintGround, npcPose: npcPose, lightFor: lightFor, toG: toG, rot: rot, signImg: signImg, angDiff: angDiff,
-      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
+      barrierDown: barrierDown, mapArea: mapArea, roadWidth: mapRoadWidth, walkWidth: mapWalk, housesNear: mapHousesNear, treesNear: mapTreesNear, roundPath: function (pc, k) { var ex = pc.exitAt[k - 1]; return polyG(pc.C, roundLocal(270, ex.th, ex.a, 0, 30, pc.g)); }, turnPath: function (pc, dir) { return polyG(pc.C, [{ x: 1.75, y: -JH }].concat(turnLocal(dir, 0, 0).slice(1))); }, JH: JH, HW: HW, RB: RB, COL: COL } };
 
   buildMenu();
   show("menu");

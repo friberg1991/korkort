@@ -196,7 +196,9 @@
       var m = mid[rbOf[id]] || (mid[rbOf[id]] = { x: 0, y: 0, n: 0 });
       m.x += nodes[id].x; m.y += nodes[id].y; m.n++;
     });
-    Object.keys(mid).forEach(function (k) { mid[k].x /= mid[k].n; mid[k].y /= mid[k].n; });
+    Object.keys(mid).forEach(function (k) { mid[k].x /= mid[k].n; mid[k].y /= mid[k].n; mid[k].r = 0; });
+    // The ring's size: its nodes' mean distance from the middle (a mini roundabout, one node, has none).
+    Object.keys(rbOf).forEach(function (id) { var m = mid[rbOf[id]]; if (m.n > 2) m.r += Math.hypot(nodes[id].x - m.x, nodes[id].y - m.y) / m.n; });
     // Every end of a way, and every node shared by ways, is a vertex.
     var use = {};
     ways.forEach(function (w) {
@@ -207,7 +209,7 @@
     var verts = {}, edges = [];
     function vert(id) {
       var key = rbOf[id] || "n" + id, v = verts[key];
-      if (!v) { var c = rbOf[id] ? mid[key] : nodes[id]; v = verts[key] = { key: key, x: c.x, y: c.y, rb: !!rbOf[id], node: rbOf[id] ? null : nodes[id], edges: [] }; }
+      if (!v) { var c = rbOf[id] ? mid[key] : nodes[id]; v = verts[key] = { key: key, x: c.x, y: c.y, rb: !!rbOf[id], rr: rbOf[id] ? c.r : 0, node: rbOf[id] ? null : nodes[id], edges: [] }; }
       return v;
     }
     function addEdge(w, ids) {
@@ -290,9 +292,17 @@
     });
     return out;
   }
+  // A roundabout's size in the game: the ring the cars drive on (the map's ring line is its middle), and how far
+  // from the middle the roads in and out start. A mini roundabout gets the game's usual size.
+  function rbGeom(v, std) {
+    var path = v && v.rr ? Math.max(9, Math.min(28, v.rr)) : 10.75;
+    return { path: Math.round(path * 10) / 10, arm: Math.max(std, Math.round(path + 3.25 + 22)) };
+  }
   // The game's ways: at a junction 0 ahead, 1 right, -1 left; in a roundabout exit 1 right, 2 ahead, 3 left.
   function jsec(rel) { var d = rel / DEG; return Math.abs(d) <= 50 ? 0 : d > 50 && d <= 150 ? 1 : d < -50 && d >= -150 ? -1 : null; }
   function rsec(rel) { var d = rel / DEG; return Math.abs(d) <= 45 ? 2 : d > 45 && d <= 135 ? 1 : d < -45 && d >= -135 ? 3 : null; }
+  // A real roundabout may be left by any exit but the way in: straight on gets the same small bonus as at a junction.
+  function rall(rel) { var d = Math.abs(rel / DEG); return d <= 45 ? 2 : d <= 172 ? 1 : null; }
   function secMid(fn, s) { return (fn === rsec ? (2 - s) : s) * 90 * DEG; }
   // The roads from which a drive can go on for ever without turning round: every road to a dead end,
   // or into streets that only lead to dead ends, is struck out, again and again until none is left.
@@ -306,7 +316,7 @@
         if (!okDir(h)) return;
         var leg = legFrom(h), next = [];
         if (leg.kind !== "dead") {
-          var fn = leg.kind === "round" ? rsec : jsec;
+          var fn = leg.kind === "round" ? rall : jsec;
           armsAt(leg.end, leg.hs[leg.hs.length - 1]).forEach(function (a) { if (a.ok && fn(a.rel) !== null) next.push(hk(a.h)); });
         }
         succ[hk(h)] = next; all.push(hk(h)); live[hk(h)] = true;
@@ -411,7 +421,7 @@
   // P is where the game's road starts (the way out of the junction before, always at right angles in the
   // game, so a little off the real road); null for the first road, which starts on the real one.
   function legSteps(run, leg, startKind, offset, P) {
-    var cutS = startKind === "junction" ? run.jh : startKind === "round" ? run.rbArm : offset || 0;
+    var cutS = startKind === "junction" ? run.jh : startKind === "round" ? run.lastArm || run.rbArm : offset || 0;
     // A junction too close for the game's junction to fit before it is driven straight through as part
     // of the road (when the way goes straight on), so the next one still lands in its real place.
     for (var guard = 0; leg.kind === "junction" && leg.line.len - cutS - run.jh < 12 && guard < 6; guard++) {
@@ -419,7 +429,7 @@
       if (!ch0 || ch0.s !== 0) break;
       leg = joinLegs(leg, legFrom(ch0.a.h));
     }
-    var cutE = leg.kind === "junction" ? run.jh : run.rbArm;   // a dead end gets a turning circle
+    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? rbGeom(leg.end, run.rbArm).arm : run.rbArm;   // a dead end gets a turning circle
     var Lr = leg.line.len - cutS - cutE, len, n, rel = [0], i, start = null;
     if (Lr >= 12) {
       // The real road's right lane, every metre, its heading taken across 12 m so a corner becomes a curve.
@@ -520,14 +530,30 @@
         if (run.dest) road.gps = { to: run.dest, left: ch.d != null ? len + ch.d : null, turn: ch.s, into: into || "" };
       }
     } else if (leg.kind === "round") {
-      var arms2 = armsAt(leg.end, last), ch2 = chooseFor(run, arms2, rsec);
-      if (ch2) {
-        jst = { type: "round", want: ch2.s, good: "Bra i cirkulationsplatsen!", npcs: RND() < 0.6 ? [{ from: "left", to: "right" }] : [],
-          real: { by: bySector(arms2, rsec, ch2), back: H(last.e, !last.f), key: leg.end.key } };
-        var out2 = nameOf(ch2.a.h.e.tags);
-        road.say.push([Math.max(1, len - 95), "I cirkulationsplatsen tar vi avfart nummer " + ch2.s + (out2 && out2 !== road.street ? " mot " + out2 : "") + "." +
-          (ch2.s === 1 ? " Blinka höger redan när du kör in." : " Blinka höger när du har passerat avfarten före.")]);
-        if (run.dest) road.gps = { to: run.dest, left: ch2.d != null ? len + ch2.d : null, exit: ch2.s, into: out2 || "" };
+      // The real roundabout: its exits where they really are, counted in the order they come
+      // (anticlockwise, the first on the right), the way back last when the road in is two-way.
+      var arms2 = armsAt(leg.end, last), ch2 = chooseFor(run, arms2, rall), G2 = rbGeom(leg.end, run.rbArm);
+      var off = 30 * 10.75 / G2.path, aMin = -90 + 2 * off + 4;
+      var exits = arms2.filter(function (a) { return a.ok; }).sort(function (x, y) { return y.rel - x.rel; });
+      var back = okDir(H(last.e, !last.f));
+      if (ch2 && exits.indexOf(ch2.a) >= 0) {
+        var by2 = {}, angs = [];
+        exits.forEach(function (a, i) {
+          by2[i + 1] = a;
+          // The game's angle (0 right, 90 ahead, 180 left, the way in at 270), kept clear of the way in.
+          angs.push(Math.round(Math.max(aMin, Math.min(270 - off, 90 - a.rel / DEG))));
+        });
+        var k2 = exits.indexOf(ch2.a) + 1;
+        run.lastArm = G2.arm;
+        jst = { type: "round", want: k2, good: "Bra i cirkulationsplatsen!",
+          npcs: exits.length >= 2 && RND() < 0.6 ? [{ fromA: angs[angs.length - 1], toA: angs[0] }] : [],
+          rb: { path: G2.path, arm: G2.arm, exits: angs, back: back },
+          real: { by: by2, backK: back ? exits.length + 1 : null, back: H(last.e, !last.f), key: leg.end.key } };
+        var out2 = nameOf(ch2.a.h.e.tags), nEx = exits.length + (back ? 1 : 0);
+        road.say.push([Math.max(1, len - 95), "I cirkulationsplatsen tar vi avfart nummer " + k2 + (out2 && out2 !== road.street ? " mot " + out2 : "") + "." +
+          (nEx !== 4 ? " Den har " + nEx + " avfarter." : "") +
+          (k2 === 1 ? " Blinka höger redan när du kör in." : " Blinka höger när du har passerat avfarten före.")]);
+        if (run.dest) road.gps = { to: run.dest, left: ch2.d != null ? len + ch2.d : null, exit: k2, into: out2 || "" };
       }
     }
     if (!jst && leg.kind === "dead") {
@@ -582,7 +608,7 @@
     if (!best) return out;
     var dirs = [true, false].filter(function (f) { return LIVE[hk(H(best.e, f))]; }), f = pick(dirs);
     var h = H(best.e, f), leg = legFrom(h), off = f ? best.t : best.e.len - best.t;
-    var cutE = leg.kind === "junction" ? run.jh : run.rbArm;
+    var cutE = leg.kind === "junction" ? run.jh : leg.kind === "round" ? rbGeom(leg.end, run.rbArm).arm : run.rbArm;
     off = Math.max(0, Math.min(off, leg.line.len - cutE - 80));
     legSteps(run, leg, "start", off, null).forEach(function (s) { out.push(s); });
     out.start = out[0].start;   // the game's world is the map's: the course starts on the real road
@@ -590,7 +616,7 @@
       var r = pc.st.real;
       if (!r) return;
       var k = pc.kind === "round" ? pc.exitK : pc.dir, arm = r.by[k];
-      if (!arm && pc.kind === "round" && k === 4) arm = { h: r.back };
+      if (!arm && pc.kind === "round" && (r.backK ? k === r.backK : k === 4)) arm = { h: r.back };
       if (!arm) {   // the game let the car out where the map has no road: the nearest real one
         var ks = Object.keys(r.by).map(Number).sort(function (x, y) { return Math.abs(x - k) - Math.abs(y - k); });
         arm = ks.length ? r.by[ks[0]] : { h: r.back };

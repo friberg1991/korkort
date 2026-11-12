@@ -555,7 +555,15 @@
       if (d.t === "house") d.obj = house(api, pc, d, (n * 0.37) % 1);
       else if (d.t === "tree") { var q = pc.at(d.u, d.w); tree(q.x, q.y, d.r * 0.8); }
     });
-    if (pc.kind === "round" && !(pc.st.real && pc.st.turn)) tree(pc.C.x, pc.C.y, 2.4);   // a turning area has no island
+    if (pc.kind === "round" && !(pc.st.real && pc.st.turn)) {   // a turning area has no island
+      tree(pc.C.x, pc.C.y, 2.4);
+      // A big real roundabout's island gets a ring of trees too, so it does not look bare.
+      var isl = pc.g ? pc.g.island : 0, nt = Math.floor(isl / 3.5);
+      for (var ti = 0; isl > 9 && ti < nt; ti++) {
+        var ta = ti / nt * Math.PI * 2 + 0.4, tr = isl * 0.6;
+        tree(pc.C.x + Math.cos(ta) * tr, pc.C.y + Math.sin(ta) * tr, 1.6 + (ti % 3) * 0.4);
+      }
+    }
     if (pc.kind === "road" || pc.kind === "mv") roadside(api, pc);
     if (pc.light) buildLights(api, pc);
   }
