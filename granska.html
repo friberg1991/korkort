@@ -45,7 +45,8 @@ button, input, textarea { font: inherit; color: inherit; }
   <a href="spel.html">◀ Spelet</a>
   <button type="button" data-home="eskilstuna">Eskilstuna</button>
   <button type="button" data-home="skogstorp">Skogstorp</button>
-  <label title="Spelets karta ovanpå satellitbilden">🛰️ <input id="mix" type="range" min="0" max="100" value="55"> 🗺️</label>
+  <button type="button" id="bgBtn" title="Byt bakgrund">🛰️ Satellit</button>
+  <label title="Spelets karta ovanpå bakgrunden">🛰️ <input id="mix" type="range" min="0" max="100" value="55"> 🗺️</label>
   <button type="button" id="listBtn">📍 Lista (0)</button>
 </div>
 <div id="info">Dra för att flytta, nyp eller hjul för att zooma. Tryck där något ser fel ut.</div>
@@ -75,7 +76,14 @@ button, input, textarea { font: inherit; color: inherit; }
   var HOMES = { eskilstuna: { name: "Eskilstuna", file: "eskilstuna.json" }, skogstorp: { name: "Skogstorp", file: "skogstorp.json" } };
   var COL = { grass: "#709c54", asph: "#4c5056", walk: "#c6c2b8", house: "#c9a0a0", roof: "#7d4a3a" };
   var LAND = { forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", water: "#4f86b0", pitch: "#5da94a" };
-  var DEG = Math.PI / 180, K = 111320, SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var DEG = Math.PI / 180, K = 111320, ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+  // Backgrounds to compare the game's streets with. Trees hide many streets on the satellite image, so
+  // one mode lays Esri's road lines over it, and one is a plain street map (Esri's, not OpenStreetMap's).
+  var BG = [
+    { name: "🛰️ Satellit", layers: ["World_Imagery"], credit: "Bild © Esri, Maxar" },
+    { name: "🛰️ Satellit + vägar", layers: ["World_Imagery", "Reference/World_Transportation"], credit: "Bild © Esri, Maxar" },
+    { name: "🗺️ Gatukarta", layers: ["World_Street_Map"], credit: "Karta © Esri" }
+  ];
   var cv = document.getElementById("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, DPR = 1;
   var store = {}; try { store = JSON.parse(localStorage.getItem("korkort-granska") || "{}"); } catch (e) { store = {}; }
   store.pins = store.pins || [];
@@ -105,9 +113,14 @@ button, input, textarea { font: inherit; color: inherit; }
     cv.width = W * DPR; cv.height = H * DPR; dirty = true;
   }
   window.addEventListener("resize", resize);
-  function tile(z, x, y) {
-    var k = z + "/" + y + "/" + x, t = tiles[k];
-    if (!t) { t = tiles[k] = new Image(); t.onload = function () { t.ok = true; dirty = true; }; t.src = SAT + k; }
+  function bg() { return BG[(store.bg || 0) % BG.length]; }
+  function showBg() {
+    document.getElementById("bgBtn").textContent = bg().name;
+    document.getElementById("credit").textContent = bg().credit + " · Kartdata © OpenStreetMap";
+  }
+  function tile(z, x, y, layer) {
+    var k = layer + "/MapServer/tile/" + z + "/" + y + "/" + x, t = tiles[k];
+    if (!t) { t = tiles[k] = new Image(); t.onload = function () { t.ok = true; dirty = true; }; t.src = ESRI + k; }
     return t.ok ? t : null;
   }
   function poly(pts) { ctx.beginPath(); pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); }
@@ -127,8 +140,10 @@ button, input, textarea { font: inherit; color: inherit; }
     ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(view.s, view.s);
     var fx = tx(c.lon), fy = ty(c.lat);
     for (var X = Math.floor(tx(a.lon)); X <= Math.floor(tx(b.lon)); X++) for (var Y = Math.floor(ty(a.lat)); Y <= Math.floor(ty(b.lat)); Y++) {
-      var im = tile(z, X, Y);
-      if (im) ctx.drawImage(im, (X - fx) * 256 * mpp, (Y - fy) * 256 * mpp, 256 * mpp + 0.3, 256 * mpp + 0.3);
+      bg().layers.forEach(function (layer) {
+        var im = tile(z, X, Y, layer);
+        if (im) ctx.drawImage(im, (X - fx) * 256 * mpp, (Y - fy) * 256 * mpp, 256 * mpp + 0.3, 256 * mpp + 0.3);
+      });
     }
     ctx.restore();
     // The game's map on top, as see-through as the slider says.
@@ -209,6 +224,8 @@ button, input, textarea { font: inherit; color: inherit; }
   document.getElementById("zin").addEventListener("click", function () { zoomAt(1.5, W / 2, H / 2); });
   document.getElementById("zout").addEventListener("click", function () { zoomAt(1 / 1.5, W / 2, H / 2); });
   document.getElementById("mix").addEventListener("input", function () { dirty = true; });
+  document.getElementById("bgBtn").addEventListener("click", function () { store.bg = ((store.bg || 0) + 1) % BG.length; save(); showBg(); dirty = true; });
+  showBg();
   document.querySelectorAll("#bar [data-home]").forEach(function (b) { b.addEventListener("click", function () { open(b.dataset.home); }); });
 
   // ---------- notes ----------

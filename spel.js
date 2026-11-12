@@ -1088,6 +1088,37 @@
     p.a = pose.a + yaw;
   }
 
+  // Steering by turning the phone like a wheel, held on its side ("Vrid mobilen" under Styrning).
+  // Gravity in the screen's plane gives the turn: upright is straight, about 30 degrees is full lock.
+  // Android and iPhone report gravity with opposite signs, so the sign is taken from the up-down part.
+  var tilt = { on: false, gx: 0, gy: 0, t: 0 };
+  function tiltStart() {
+    if (tilt.on || tilt.asked || typeof window.DeviceMotionEvent === "undefined") return;
+    tilt.asked = true;
+    var go = function () {
+      tilt.on = true;
+      window.addEventListener("devicemotion", function (e) {
+        var g = e.accelerationIncludingGravity;
+        if (!g || g.x == null) return;
+        var ang = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * DEG;
+        var sx = g.x * Math.cos(ang) - g.y * Math.sin(ang), sy = g.x * Math.sin(ang) + g.y * Math.cos(ang);
+        tilt.gx += (sx - tilt.gx) * 0.35; tilt.gy += (sy - tilt.gy) * 0.35; tilt.t = performance.now();
+      });
+    };
+    // The listener goes on at once; an iPhone sends nothing until it is allowed, and asks only from a tap.
+    go();
+    if (typeof DeviceMotionEvent.requestPermission === "function") DeviceMotionEvent.requestPermission().catch(function () {});
+  }
+  // Any tap starts the sensor when it is chosen (the iPhone asks again after each page load).
+  document.addEventListener("click", function () { if (store.steer === "tilt" && !tilt.on) tiltStart(); }, true);
+  function tiltSteer() {
+    if (store.steer !== "tilt" || !tilt.on || performance.now() - tilt.t > 500 || window.innerWidth <= window.innerHeight) return null;
+    var up = Math.abs(tilt.gy), side = -tilt.gx * (tilt.gy < 0 ? -1 : 1);
+    if (up + Math.abs(side) < 2) return null;    // lying flat: no wheel to read
+    var a = Math.atan2(side, up), dead = 3 * DEG, full = 30 * DEG;
+    if (Math.abs(a) < dead) return 0;
+    return clamp((Math.abs(a) - dead) / (full - dead), 0, 1) * (a < 0 ? -1 : 1);
+  }
   // He steers: a simple car model moves the car, and its place along the course is worked out from where it is.
   function project(s) {
     var p = G.p;
@@ -1111,6 +1142,8 @@
     var maxS = 0.62 / (1 + p.v * p.v / 60);
     var want = keys.left && !keys.right ? -maxS : keys.right && !keys.left ? maxS : 0;
     var rate = want === 0 ? 2.4 : 1.5;
+    var tl = tiltSteer();
+    if (tl !== null && !keys.left && !keys.right) { want = tl * maxS; rate = 3; }
     p.steer += clamp(want - p.steer, -rate * dt, rate * dt);
     p.steer = clamp(p.steer, -maxS - 0.04, maxS + 0.04);
     var bite = (0.35 + 0.65 * G.grip) * (G.aquaT > 0 ? 0.1 : 1);
@@ -2604,20 +2637,22 @@
   // satellite button on, aerial photos are laid over it (they need internet; without, the map shows).
   var miniCv = document.getElementById("miniCv"), miniCtx = miniCv.getContext("2d"), miniT = -9, tiles = {};
   var MINI_M = 280;            // metres across the small map
-  var SAT_Z = 18, SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var SAT_Z = 18, ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/", SAT_URL = ESRI + "World_Imagery/MapServer/tile/";
+  // Esri's road lines, laid over the satellite image where trees hide the streets.
+  var ROADS_URL = ESRI + "Reference/World_Transportation/MapServer/tile/";
   var miniSatBtn = document.getElementById("miniSat"), miniEl = document.getElementById("mini");
   function miniSize() { miniEl.classList.toggle("big", !!store.miniBig); gameEl.classList.toggle("miniBig", !!store.miniBig); miniT = -9; }
   miniEl.addEventListener("pointerdown", function (e) {
     if (e.target === miniSatBtn) return;
     e.preventDefault(); store.miniBig = !store.miniBig; saveStore(); miniSize();
   });
-  miniSatBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); store.miniSat = !store.miniSat; saveStore(); miniT = -9; });
-  function tileImg(z, x, y) {
-    var k = z + "/" + y + "/" + x, t = tiles[k];
+  miniSatBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); store.miniSat = store.miniSat === 2 ? false : store.miniSat ? 2 : true; saveStore(); miniT = -9; });
+  function tileImg(z, x, y, base) {
+    var k = (base || SAT_URL) + z + "/" + y + "/" + x, t = tiles[k];
     if (!t) {
       t = tiles[k] = new Image();
       t.onload = function () { t.ok = true; miniT = -9; };
-      t.src = SAT_URL + k;
+      t.src = k;
     }
     return t.ok ? t : null;
   }
@@ -2670,6 +2705,7 @@
       for (var i = -R; i <= R; i++) for (var j = -R; j <= R; j++) {
         var im = tileImg(SAT_Z, tx0 + i, ty0 + j);
         if (im) ctx.drawImage(im, (tx0 + i - fx) * 256, (ty0 + j - fy) * 256, 256.6, 256.6);
+        if (store.miniSat === 2 && (im = tileImg(SAT_Z, tx0 + i, ty0 + j, ROADS_URL))) ctx.drawImage(im, (tx0 + i - fx) * 256, (ty0 + j - fy) * 256, 256.6, 256.6);
       }
       ctx.restore();
     }
@@ -2933,12 +2969,12 @@
     document.getElementById("opt3d").checked = !!store.view3d;
     document.getElementById("optFacts").checked = store.facts !== false;
     document.getElementById("optTraffic").value = String(store.traffic || 0);
-    document.getElementById("optSteer").value = store.steer === "auto" ? "auto" : "manual";
+    document.getElementById("optSteer").value = store.steer === "auto" || store.steer === "tilt" ? store.steer : "manual";
     document.getElementById("optWalkers").value = String(store.walkers || 0);
     document.getElementById("pad").hidden = false;
   }
   document.getElementById("optVoice").addEventListener("change", function (e) { store.voice = e.target.checked; saveStore(); if (store.voice) speak("Hej! Jag är din lärare."); });
-  document.getElementById("optSteer").addEventListener("change", function (e) { store.steer = e.target.value; saveStore(); });
+  document.getElementById("optSteer").addEventListener("change", function (e) { store.steer = e.target.value; saveStore(); if (store.steer === "tilt") tiltStart(); });
   document.getElementById("optTraffic").addEventListener("change", function (e) { store.traffic = +e.target.value; saveStore(); });
   document.getElementById("optWalkers").addEventListener("change", function (e) { store.walkers = +e.target.value; saveStore(); });
   document.getElementById("optFacts").addEventListener("change", function (e) { store.facts = e.target.checked; saveStore(); });
@@ -3078,13 +3114,25 @@
     var n = 256 * Math.pow(2, z);
     return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) / DEG, lon: x / n * 360 - 180 };
   }
-  function spTile(z, x, y) {
-    var k = z + "/" + y + "/" + x, t = spTiles[k];
+  // The picker's backgrounds: trees hide many streets on the satellite image, so one mode lays road lines over it.
+  var SP_BG = [
+    { name: "🛰️ Satellit", layers: ["World_Imagery"], credit: "Bild © Esri, Maxar" },
+    { name: "🛰️ Satellit + vägar", layers: ["World_Imagery", "Reference/World_Transportation"], credit: "Bild © Esri, Maxar" },
+    { name: "🗺️ Gatukarta", layers: ["World_Street_Map"], credit: "Karta © Esri" }
+  ];
+  function spBg() { return SP_BG[(store.spawnBg || 0) % SP_BG.length]; }
+  function spShowBg() {
+    document.getElementById("spawnBg").textContent = spBg().name;
+    document.getElementById("spawnCredit").textContent = spBg().credit + " · Kartdata © OpenStreetMap-bidragsgivare";
+  }
+  function spTileKey(layer, z, x, y) { return layer + "/MapServer/tile/" + z + "/" + y + "/" + x; }
+  function spTile(layer, z, x, y) {
+    var k = spTileKey(layer, z, x, y), t = spTiles[k];
     if (!t) {
-      if (spTileN > 400) { spTiles = {}; spTileN = 0; }
+      if (spTileN > 600) { spTiles = {}; spTileN = 0; }
       t = spTiles[k] = new Image(); spTileN++;
       t.onload = function () { t.ok = true; spDirty = true; };
-      t.src = SAT_URL + k;
+      t.src = ESRI + k;
     }
     return t.ok ? t : null;
   }
@@ -3103,18 +3151,20 @@
     spCtx.translate(spW / 2, spH / 2); spCtx.scale(sc, sc); spCtx.translate(-c.x, -c.y);
     var hw = spW / 2 / sc, hh = spH / 2 / sc;
     var x0 = Math.floor((c.x - hw) / 256), x1 = Math.floor((c.x + hw) / 256), y0 = Math.max(0, Math.floor((c.y - hh) / 256)), y1 = Math.min(n - 1, Math.floor((c.y + hh) / 256));
-    for (var tx = x0; tx <= x1; tx++) for (var ty = y0; ty <= y1; ty++) {
-      var wx = ((tx % n) + n) % n, im = spTile(tz, wx, ty);
-      if (im) { spCtx.drawImage(im, tx * 256, ty * 256, 256.5, 256.5); continue; }
-      // While a tile loads, a bigger one from further out stands in, so the map is never blank.
-      for (var up = 1; up <= 3 && tz - up >= 0; up++) {
-        var f = Math.pow(2, up), p = spTiles[(tz - up) + "/" + Math.floor(ty / f) + "/" + Math.floor(wx / f)];
-        if (p && p.ok) {
-          var s = 256 / f;
-          spCtx.drawImage(p, (wx % f) * s, (ty % f) * s, s, s, tx * 256, ty * 256, 256.5, 256.5); break;
+    spBg().layers.forEach(function (layer) {
+      for (var tx = x0; tx <= x1; tx++) for (var ty = y0; ty <= y1; ty++) {
+        var wx = ((tx % n) + n) % n, im = spTile(layer, tz, wx, ty);
+        if (im) { spCtx.drawImage(im, tx * 256, ty * 256, 256.5, 256.5); continue; }
+        // While a tile loads, a bigger one from further out stands in, so the map is never blank.
+        for (var up = 1; up <= 3 && tz - up >= 0; up++) {
+          var f = Math.pow(2, up), p = spTiles[spTileKey(layer, tz - up, Math.floor(wx / f), Math.floor(ty / f))];
+          if (p && p.ok) {
+            var s = 256 / f;
+            spCtx.drawImage(p, (wx % f) * s, (ty % f) * s, s, s, tx * 256, ty * 256, 256.5, 256.5); break;
+          }
         }
       }
-    }
+    });
   }
   // Which packed map the pin is in, and the pin's place in that map's metres.
   function spHome() {
@@ -3171,6 +3221,8 @@
   });
   spCv.addEventListener("pointercancel", function (e) { delete spPts[e.pointerId]; });
   spCv.addEventListener("wheel", function (e) { e.preventDefault(); spZoom(e.deltaY < 0 ? 1.25 : 0.8, e.clientX, e.clientY); }, { passive: false });
+  document.getElementById("spawnBg").addEventListener("click", function () { store.spawnBg = ((store.spawnBg || 0) + 1) % SP_BG.length; saveStore(); spShowBg(); spDirty = true; });
+  spShowBg();
   document.getElementById("spawnIn").addEventListener("click", function () { spZoom(2); });
   document.getElementById("spawnOut").addEventListener("click", function () { spZoom(0.5); });
   window.addEventListener("resize", function () { if (spOn) spResize(); });
