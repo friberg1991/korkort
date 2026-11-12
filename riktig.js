@@ -731,7 +731,9 @@
     // Start on the street nearest the place, or nearest the spot picked on the satellite map (opts.at).
     var ax = opts.at ? opts.at.x : 0, ay = opts.at ? opts.at.y : 0, best = null, bd = 1e9;
     area.edges.forEach(function (e) {
-      if (e.rank < 1 || e.len < 60 || !(LIVE[e.i * 2] || LIVE[e.i * 2 + 1])) return;
+      // A spot picked on the map may start on any drivable road there, service roads (industrial areas)
+      // and short bits between junctions too; a place searched for starts on a proper street.
+      if ((opts.at ? e.len < 20 : e.rank < 1 || e.len < 60) || !(LIVE[e.i * 2] || LIVE[e.i * 2 + 1])) return;
       for (var i = 1; i < e.pts.length; i++) {
         var a = e.pts[i - 1], b = e.pts[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-6;
         var f = Math.max(0, Math.min(1, ((ax - a.x) * dx + (ay - a.y) * dy) / l2)), x = a.x + dx * f, y = a.y + dy * f, d = Math.hypot(x - ax, y - ay);
@@ -765,8 +767,10 @@
   // The drivable street nearest a point, for the start picker: its name (or "") and how far away it is.
   function nearStreet(area, x, y) {
     var best = null, bd = 1e9;
+    RR = area.rRoads || R_ROADS; RD = area.rDrive || R_DRIVE;
+    var live = liveRoads(area);   // the same roads a drive may start on (steps, with opts.at)
     area.edges.forEach(function (e) {
-      if (e.rank < 1 || e.len < 60) return;
+      if (e.len < 20 || !(live[e.i * 2] || live[e.i * 2 + 1])) return;
       for (var i = 1; i < e.pts.length; i++) {
         var a = e.pts[i - 1], b = e.pts[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-6;
         var f = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2)), d = Math.hypot(a.x + dx * f - x, a.y + dy * f - y);
