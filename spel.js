@@ -312,17 +312,24 @@
     if (T[k]) return T[k];
     var out = T[k] = [];
     (A.grid[k] || []).forEach(function (h) {
-      var r = rng(h.id % 100000 + 7), n = r() < 0.25 ? 0 : r() < 0.6 ? 1 : 2, rad = 0;
+      var r = rng(h.id % 100000 + 7), n = r() < 0.15 ? 0 : r() < 0.35 ? 1 : r() < 0.6 ? 2 : r() < 0.85 ? 3 : 4, rad = 0;
       h.pts.forEach(function (q) { rad = Math.max(rad, Math.hypot(q.x - h.cx, q.y - h.cy)); });
       if (rad > 25) return;   // big buildings: no garden
       for (var i = 0; i < n; i++) {
-        var ang = r() * Math.PI * 2, d = rad + 3 + r() * 7, t = { x: h.cx + Math.cos(ang) * d, y: h.cy + Math.sin(ang) * d, r: 1.6 + r() * 1.6, id: h.id * 3 + i };
+        var ang = r() * Math.PI * 2, d = rad + 2.5 + r() * 9, t = { x: h.cx + Math.cos(ang) * d, y: h.cy + Math.sin(ang) * d, r: 1.6 + r() * 1.6, id: h.id * 3 + i };
         if (onStreet(A, t.x, t.y, t.r + 0.5)) continue;
         if (mapHousesNear(A, t.x, t.y, 20, true).some(function (o) { return nearHouse(o, t, t.r * 0.7); })) continue;
         out.push(t);
       }
     });
     forestTrees(A, k, out);
+    // The map's own trees, where it has them (street trees, tree rows, single trees in yards).
+    ((A.treeGrid || {})[k] || []).forEach(function (q) {
+      var r = rng(q.id + 11), t = { x: q.x, y: q.y, r: 1.8 + r() * 1.4, sp: r() < 0.2, id: 900000 + q.id };
+      if (onStreet(A, t.x, t.y, 0.3)) return;
+      if (mapHousesNear(A, t.x, t.y, 20, true).some(function (o) { return nearHouse(o, t, 0.5); })) return;
+      out.push(t);
+    });
     return out;
   }
   function inPoly(P, x, y) {
@@ -332,10 +339,10 @@
     return c;
   }
   function landsNear(A, x0, y0, x1, y1) { return (A.lands || []).filter(function (l) { return l.bb[2] > x0 && l.bb[0] < x1 && l.bb[3] > y0 && l.bb[1] < y1; }); }
-  var LAND = { forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", water: "#4f86b0", pitch: "#5da94a" };
+  var LAND = { ind: "#9ea28c", forest: "#55803f", scrub: "#6b9150", park: "#80b060", field: "#b3bd73", parking: "#6c7077", water: "#4f86b0", pitch: "#5da94a" };
   function drawLands(A, x, y, r) {
     var ls = landsNear(A, x - r, y - r, x + r, y + r);
-    ["field", "park", "scrub", "forest", "water", "pitch"].forEach(function (k) {
+    ["ind", "field", "park", "scrub", "forest", "parking", "water", "pitch"].forEach(function (k) {
       ls.forEach(function (l) {
         if (l.k !== k) return;
         ctx.beginPath(); l.pts.forEach(function (q, i) { if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }); ctx.closePath();
@@ -344,16 +351,27 @@
       });
     });
   }
-  // Trees in forests and scrub: on a loose grid inside the area, never on a street or in a house.
+  // Trees in forests, scrub and parks: on a loose grid inside the area, never on a street or in a house;
+  // and now and then one on plain grass.
   function forestTrees(A, k, out) {
     var xy = k.split(",").map(Number), x0 = xy[0] * 60, y0 = xy[1] * 60;
-    var ls = landsNear(A, x0, y0, x0 + 60, y0 + 60).filter(function (l) { return l.k === "forest" || l.k === "scrub"; });
-    if (!ls.length) return;
+    var all = landsNear(A, x0, y0, x0 + 60, y0 + 60), ls = all.filter(function (l) { return l.k === "forest" || l.k === "scrub" || l.k === "park"; });
     var r = rng(xy[0] * 7919 + xy[1] * 104729 + 3);
+    // Grass the map says nothing about (verges, yards, between blocks): now and then a tree, well off the streets.
+    for (var sx = 0; sx < 60; sx += 20) for (var sy = 0; sy < 60; sy += 20) {
+      if (r() > 0.22) continue;
+      var st = { x: x0 + sx + r() * 18, y: y0 + sy + r() * 18, r: 1.7 + r() * 1.5, sp: r() < 0.3, id: Math.floor(r() * 1e6) };
+      if (all.some(function (q) { return inPoly(q.pts, st.x, st.y); }) || onStreet(A, st.x, st.y, st.r + 3)) continue;
+      if (mapHousesNear(A, st.x, st.y, 20, true).some(function (o) { return nearHouse(o, st, st.r + 1); })) continue;
+      out.push(st);
+    }
+    if (!ls.length) return;
     for (var gx = 0; gx < 60; gx += 10) for (var gy = 0; gy < 60; gy += 10) {
       var t = { x: x0 + gx + r() * 8, y: y0 + gy + r() * 8, r: 1.8 + r() * 1.6, sp: r() < 0.6, id: Math.floor(r() * 1e6) };
-      var l = ls.find(function (q) { return inPoly(q.pts, t.x, t.y); });
-      if (!l || (l.k === "scrub" && r() < 0.5)) continue;
+      // Forest, scrub, and the odd tree in a park (a park or lawn is mostly open grass).
+      var l = ls.find(function (q) { return inPoly(q.pts, t.x, t.y) && q.k !== "park"; }) || ls.find(function (q) { return inPoly(q.pts, t.x, t.y); });
+      if (!l || (l.k === "scrub" && r() < 0.5) || (l.k === "park" && r() < 0.88)) continue;
+      if (l.k === "park") t.sp = r() < 0.25;
       if (onStreet(A, t.x, t.y, t.r)) continue;
       if (mapHousesNear(A, t.x, t.y, 20, true).some(function (o) { return nearHouse(o, t, t.r * 0.6); })) continue;
       out.push(t);

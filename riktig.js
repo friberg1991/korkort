@@ -89,6 +89,12 @@
         }
         return { k: x[0], pts: pts, bb: bb };
       });
+      // The map's own trees (single ones and rows along streets), by 60 m square like the houses.
+      area.treeGrid = {};
+      for (var ti = 0; m.t && ti < m.t.length; ti += 2) {
+        var tx = (m.t[ti + 1] - m.lon) * kx, ty = -(m.t[ti] - m.lat) * K, tk = Math.floor(tx / 60) + "," + Math.floor(ty / 60);
+        (area.treeGrid[tk] = area.treeGrid[tk] || []).push({ x: tx, y: ty, id: ti });
+      }
       return area;
     });
   }
